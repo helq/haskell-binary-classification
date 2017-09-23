@@ -1,0 +1,48 @@
+resolver: lts-8.13
+# resolver: lts-9.5
+
+packages:
+  - .
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow-core-ops
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow-opgen
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow-proto
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow-ops
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow-logging
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow-records
+#  - /home/helq/Experimenting/tensorflow-haskell/tensorflow-records-conduit
+
+extra-deps:
+  - grenade-0.1.0
+#  # from tensorflow
+#  - snappy-framing-0.1.1
+#  - snappy-0.2.0.2
+#  - proto-lens-protobuf-types-0.2.2.0
+#  - proto-lens-0.2.2.0
+#  - proto-lens-descriptors-0.2.2.0
+#  - proto-lens-protoc-0.2.2.3
+#  - lens-labels-0.1.0.2
+
+# Override default flag values for local packages and extra-deps
+flags: {}
+
+# Extra package databases containing global packages
+extra-package-dbs: []
+
+# Control whether we use the GHC we find on the path
+# system-ghc: true
+#
+# Require a specific version of stack, using version ranges
+# require-stack-version: -any # Default
+# require-stack-version: ">=1.5"
+#
+# Override the architecture used by stack, especially useful on Windows
+# arch: i386
+# arch: x86_64
+#
+# Extra directories used by stack for building
+# extra-include-dirs: [/path/to/dir]
+# extra-lib-dirs: [/path/to/dir]
+#
+# Allow a newer minor version of GHC than the snapshot specifies
+# compiler-check: newer-minor

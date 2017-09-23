@@ -1,0 +1,55 @@
+name:                homework1
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/githubuser/homework1#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Elkin Cruz
+maintainer:          helq@live.de
+copyright:           2017 Elkin Cruz
+--category:            Console app
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Song
+                     , Song.Grenade
+                     , Shuffle
+  build-depends:       base >= 4.7 && < 5
+                     , megaparsec
+                     , microlens-th
+                     , text
+                     , MonadRandom
+                     , array
+                     , grenade
+                     , hmatrix
+  default-language:    Haskell2010
+
+executable homework1-exe
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , homework1
+                     , text
+                     , microlens
+                     , grenade
+                     , MonadRandom
+                     , hmatrix
+  default-language:    Haskell2010
+
+--test-suite homework1-test
+--  type:                exitcode-stdio-1.0
+--  hs-source-dirs:      test
+--  main-is:             Spec.hs
+--  build-depends:       base
+--                     , homework1
+--  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+--  default-language:    Haskell2010
+
+--source-repository head
+--  type:     git
+--  location: https://github.com/githubuser/homework1
