@@ -39,6 +39,9 @@ executable homework1-exe
                      , grenade
                      , MonadRandom
                      , hmatrix
+                     , optparse-applicative
+                     , bytestring
+                     , cereal
   default-language:    Haskell2010
 
 --test-suite homework1-test
