@@ -13,7 +13,8 @@ import           Data.Maybe (mapMaybe)
 
 import           Data.List (foldl')
 import           Control.Monad (foldM)
-import           Control.Monad.Random (MonadRandom, evalRandIO)
+import           Control.Monad.Random (MonadRandom, evalRandIO, evalRand)
+import           System.Random (mkStdGen)
 
 import           Data.Semigroup ((<>))
 import           Options.Applicative (Parser, option, auto, optional, long, short, value
@@ -24,7 +25,7 @@ import           Data.Serialize (runPut, put, runGet, get, Get)
 import           Numeric.LinearAlgebra.Static (extract, R, ℝ)
 import           Numeric.LinearAlgebra.Data (Vector, (!))
 
-import           Grenade (Network, FullyConnected, Tanh, Relu, Logit, Shape(D1)
+import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1) --, Relu
                          , LearningParameters(..), randomNetwork, train, runNet, S(S1D))
 
 import           Song (Song(..), line2song, genre)
@@ -127,19 +128,21 @@ main = do
 
   -- Loading songs
   songs <- fmap (song2SD labelSong) <$> getSongs filenameDataset
-  let n = length songs
-  -- Shuffling songs
-  --putStrLn "Shuffling songs ..." -- <- this doesn't work by the lazy nature of haskell
-  shuffledSongs <- evalRandIO $ shuffle songs
-  --print (head shuffledSongs) -- <- this actually works, this is printed only when all the previous steps have been performed
-  let (testSet, trainSet) = splitAt (round $ fromIntegral n * testPerc) shuffledSongs
 
+  let n = length songs
+      -- Shuffling songs
+      shuffledSongs       = evalRand (shuffle songs) (mkStdGen 487239842)
+      (testSet, trainSet) = splitAt (round $ fromIntegral n * testPerc) shuffledSongs
+
+  -- Pretraining scores
+  --print $ head shuffledSongs
   putStrLn $ "Test Size: " <> show (length testSet)
   netScore net0 trainSet testSet
+
   -- Training Net
   net <- trainNet net0 rate trainSet testSet epochs
+
   -- Showing results of training net
-  --print net
   netScore net trainSet testSet
 
   case save of
