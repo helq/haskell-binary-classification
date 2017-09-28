@@ -7,7 +7,7 @@ module Main where
 import           Lens.Micro.Extras (view)
 import qualified Data.Text.IO as Text (readFile)
 import           Data.Text (lines)
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (mapMaybe, fromMaybe)
 import           Data.List (zip4) --, foldl1')
 
 import           Control.Arrow ((***))
@@ -23,8 +23,8 @@ import           Options.Applicative (Parser, option, auto, optional, long, shor
 import qualified Data.ByteString as B
 import           Data.Serialize (runPut, put, runGet, get, Get)
 
-import           Numeric.LinearAlgebra.Static ((#), R) --, unwrap, zipWithVector)
---import           Numeric.LinearAlgebra (toList)
+import           Numeric.LinearAlgebra.Static ((#), (&), R, unwrap, konst) --, zipWithVector)
+import           Numeric.LinearAlgebra (toList)
 
 --import           GHC.TypeLits
 import           Data.Singletons.TypeLits (KnownNat)
@@ -32,7 +32,8 @@ import           Data.Singletons.TypeLits (KnownNat)
 import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1) --, Relu
                          , LearningParameters(..), randomNetwork, S(S1D))
 
-import           GrenadeExtras (binaryNetError, epochTraining, normalize)
+import           GrenadeExtras (binaryNetError, epochTraining, normalize, hotvector)
+import           GrenadeExtras.Zip (Zip)
 
 import           Song (Song(..), line2song, genre)
 import           Song.Grenade (song2TupleRn) --, SongSD)
@@ -40,12 +41,18 @@ import           Shuffle (shuffle)
 
 --type FFNet = Network '[ FullyConnected 30 1, Logit ]
 --                     '[ 'D1 30, 'D1 1, 'D1 1 ]
-type FFNet = Network '[ FullyConnected 57 40, Tanh, FullyConnected 40 1, Logit ]
-                     '[ 'D1 57, 'D1 40, 'D1 40, 'D1 1, 'D1 1 ]
+--type FFNet = Network '[ FullyConnected 75 40, Tanh, FullyConnected 40 1, Logit ]
+--                     '[ 'D1 75, 'D1 40, 'D1 40, 'D1 1, 'D1 1 ]
 --type FFNet n = Network '[ FullyConnected 30 n, Tanh, FullyConnected n 1, Logit ]
 --                     '[ 'D1 30, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
---type FFNet = Network '[ FullyConnected 60 300, Tanh, FullyConnected 300 140, Tanh, FullyConnected 140 1, Logit ]
---                     '[ 'D1 60, 'D1 300, 'D1 300, 'D1 140, 'D1 140, 'D1 1, 'D1 1 ]
+type FFNetForDiscrete = Network '[FullyConnected 21 10] '[ 'D1 21, 'D1 10 ]
+type FFNet = Network '[ Zip ('D1 21) ('D1 10) FFNetForDiscrete ('D1 54) ('D1 90) (FullyConnected 54 90),
+                        Tanh, FullyConnected 100 35,
+                        Tanh, FullyConnected 35 1,
+                        Logit ]
+                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 35, 'D1 35, 'D1 1, 'D1 1 ]
+--type FFNet = Network '[ FullyConnected 75 300, Tanh, FullyConnected 300 140, Tanh, FullyConnected 140 1, Logit ]
+--                     '[ 'D1 75, 'D1 300, 'D1 300, 'D1 140, 'D1 140, 'D1 1, 'D1 1 ]
 --type FFNet = Network '[ FullyConnected 60 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
 --                     '[ 'D1 60, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 20, 'D1 20, 'D1 1, 'D1 1 ]
 
@@ -111,6 +118,12 @@ modelsParameters =
 addLog :: KnownNat n => R n -> R n
 addLog a = signum a * log (abs a+1)
 
+discreteToOneHotVector :: R 3 -> R 21
+discreteToOneHotVector featDiscre = (fromMaybe (konst 0) $ hotvector (round a)::R 8)
+                                  # (fromMaybe (konst 0) $ hotvector (round b)::R 12)
+                                  & c
+  where [a,b,c] = toList $ unwrap featDiscre
+
 main :: IO ()
 main = do
   ModelsParameters testPerc epochs norm rate load save logs <- execParser (info (modelsParameters <**> helper) idm)
@@ -126,8 +139,10 @@ main = do
 
   -- Loading songs
   songsRaw <- fmap (song2TupleRn labelSong) <$> getSongs filenameDataset
-  let --songsDiscrete :: [R 3]
+  let songsDiscrete :: [R 3]
       songsDiscrete = fmap (fst . fst) songsRaw
+      songsDisOneHotVector :: [R 21]
+      songsDisOneHotVector = fmap discreteToOneHotVector songsDiscrete
       --songsFloat    :: [R 27]
       songsFloat    = fmap (snd . fst) songsRaw
       --songsLog      :: [R 27]
@@ -135,7 +150,7 @@ main = do
       --songsLabel    :: [R 1]
       songsLabel    = fmap snd songsRaw
       --songs :: [(S ('D1 57), S ('D1 1))]
-      songs = (\(l1,l2,l3,o)->(S1D (l1#l2#l3), S1D o)) <$> zip4 songsDiscrete (normFun songsFloat) (normFun songsLog) songsLabel
+      songs = (\(l1,l2,l3,o)->(S1D (l1#l2#l3), S1D o)) <$> zip4 songsDisOneHotVector (normFun songsFloat) (normFun songsLog) songsLabel
 
   --print . toList . unwrap $ foldl1' (zipWithVector max) songsDiscrete
   --print . toList . unwrap $ foldl1' (zipWithVector min) songsDiscrete

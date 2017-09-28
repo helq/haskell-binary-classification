@@ -7,7 +7,8 @@
 module GrenadeExtras (
   epochTraining,
   binaryNetError,
-  normalize
+  normalize,
+  hotvector
 ) where
 
 import           Shuffle (shuffle)
@@ -20,7 +21,7 @@ import           Lens.Micro (over, both)--Lens', set)
 import           Data.Singletons (SingI)
 import           Data.Singletons.Prelude (Head, Last)
 
-import           Numeric.LinearAlgebra.Static (extract, R, ℝ)
+import           Numeric.LinearAlgebra.Static (extract, R, ℝ, toRows, eye)
 import           Numeric.LinearAlgebra.Data (Vector, (!))
 
 import           GHC.TypeLits (KnownNat)
@@ -96,3 +97,13 @@ normalize features = fmap (\x -> (x-mean)/stdDeviation ) features
     --stdDeviation :: R n
     stdDeviation = sqrt $ (sum . fmap (\x-> (x-mean)^(2::Int)) $ features)
                           / fromIntegral (len-1)
+
+hotvector :: KnownNat n => Int -> Maybe (R n)
+hotvector m = toRows eye ~!! m
+  where
+    (~!!) :: [a] -> Int -> Maybe a
+    []     ~!! _ = Nothing
+    (x:xs) ~!! n
+      | n == 0 = Just x
+      | n < 0  = Nothing
+      | otherwise = xs ~!! (n-1)
