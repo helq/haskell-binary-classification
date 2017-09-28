@@ -46,6 +46,7 @@ executable homework1-exe
                      , bytestring
                      , cereal
                      , random
+                     , singletons
   default-language:    Haskell2010
 
 --test-suite homework1-test

@@ -7,10 +7,11 @@
 module GrenadeExtras (
   epochTraining,
   binaryNetError,
+  normalize
 ) where
 
 import           Shuffle (shuffle)
-import           Control.Monad.Random (Rand, RandomGen)
+import           Control.Monad.Random (MonadRandom)
 
 import           Data.List (foldl')
 
@@ -22,15 +23,17 @@ import           Data.Singletons.Prelude (Head, Last)
 import           Numeric.LinearAlgebra.Static (extract, R, ℝ)
 import           Numeric.LinearAlgebra.Data (Vector, (!))
 
+import           GHC.TypeLits (KnownNat)
+
 import           Grenade (Network, Shape(D1), LearningParameters(..), train, runNet, S(S1D))
 
 
-epochTraining :: (SingI (Last shapes), RandomGen g) =>
+epochTraining :: (SingI (Last shapes), MonadRandom m) =>
                  Network layers shapes
                  -> LearningParameters
                  -> [(S (Head shapes), S (Last shapes))]
                  -> Int
-                 -> Rand g [Network layers shapes]
+                 -> m [Network layers shapes]
 epochTraining net0 rate input_data epochs =
 
     foldMeOutList net0 [1..epochs::Int] $ \net _-> do
@@ -53,18 +56,18 @@ epochTraining net0 rate input_data epochs =
               return $ zero':rec
 
 
-binaryNetError :: (Last shapes ~ 'D1 1, Fractional a, Foldable t) =>
-            Network layers shapes -> t (S (Head shapes), S ('D1 1)) -> a
+binaryNetError :: (Last shapes ~ 'D1 1, Foldable t) =>
+  Network layers shapes -> t (S (Head shapes), S ('D1 1)) -> (Double, Double)
 
-binaryNetError net test = fromIntegral errors / fromIntegral total
+binaryNetError net test = (fromIntegral errors / fromIntegral total, distance)
   where
     total, errors :: Integer
-    (total, errors) = foldl' step (0,0) test
-    --distance :: Double
-    --(total, errors, distance) = foldl' step (0,0,0) test
+    {-(total, errors) = foldl' step (0,0) test-}
+    distance :: Double
+    (total, errors, distance) = foldl' step (0,0,0) test
 
-    step (t, e) song = (t+1, e')
-    --step (t, e, d) song = (t+1, e', d')
+    {-step (t, e) song = (t+1, e')-}
+    step (t, e, d) song = (t+1, e', d')
       where
         (label, netOut) = valueFromDataAndNet song
         -- the predictions from the network come with numbers between 0 and 1,
@@ -72,10 +75,24 @@ binaryNetError net test = fromIntegral errors / fromIntegral total
         e' = if (label > 0.5) == (netOut > 0.5)
                 then e
                 else e+1
-        --d' = d + abs (label - netOut)
+        d' = d + abs (label - netOut)
 
 --    valueFromDataAndNet :: SongSD -> (Double, Double)
     valueFromDataAndNet (input, label) = over both sd1toDouble (label, runNet net input)
       where
         sd1toDouble :: S ('D1 1) -> Double
         sd1toDouble (S1D r) = (extract :: R 1 -> Vector ℝ) r ! 0
+
+-- taken from https://en.wikipedia.org/wiki/Normalization_(statistics)
+-- normalization method: Student's t-statistic
+normalize :: KnownNat n => [R n] -> [R n]
+normalize features = fmap (\x -> (x-mean)/stdDeviation ) features
+  where
+    len = length features
+
+    --mean :: R n
+    mean = sum features / fromIntegral len
+
+    --stdDeviation :: R n
+    stdDeviation = sqrt $ (sum . fmap (\x-> (x-mean)^(2::Int)) $ features)
+                          / fromIntegral (len-1)

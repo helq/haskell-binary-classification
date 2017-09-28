@@ -28,7 +28,7 @@ data Song = Song
     _duration       :: Double,
     _avgTimbre      :: [Double], -- there are only 12 avg_timbre numbers
     _varTimbre      :: [Double]  -- there are only 12 var_timbre numbers
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Ord)
 
 makeLenses ''Song
 

@@ -8,10 +8,14 @@ import           Lens.Micro.Extras (view)
 import qualified Data.Text.IO as Text (readFile)
 import           Data.Text (lines)
 import           Data.Maybe (mapMaybe)
+import           Data.List (zip4) --, foldl1')
+
+import           Control.Arrow ((***))
 
 import           Control.Monad (forM_)
-import           Control.Monad.Random (MonadRandom, evalRandIO, evalRand)
+import           Control.Monad.Random (evalRand)
 import           System.Random (mkStdGen)
+import qualified System.Random as SR (split)
 
 import           Data.Semigroup ((<>))
 import           Options.Applicative (Parser, option, auto, optional, long, short, value
@@ -19,29 +23,33 @@ import           Options.Applicative (Parser, option, auto, optional, long, shor
 import qualified Data.ByteString as B
 import           Data.Serialize (runPut, put, runGet, get, Get)
 
-import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1) --, Relu
-                         , LearningParameters(..), randomNetwork)--, train, runNet, S(S1D))
+import           Numeric.LinearAlgebra.Static ((#), R) --, unwrap, zipWithVector)
+--import           Numeric.LinearAlgebra (toList)
 
-import           GrenadeExtras (binaryNetError, epochTraining)
+--import           GHC.TypeLits
+import           Data.Singletons.TypeLits (KnownNat)
+
+import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1) --, Relu
+                         , LearningParameters(..), randomNetwork, S(S1D))
+
+import           GrenadeExtras (binaryNetError, epochTraining, normalize)
 
 import           Song (Song(..), line2song, genre)
-import           Song.Grenade (song2SD, normalize) --, SongSD)
+import           Song.Grenade (song2TupleRn) --, SongSD)
 import           Shuffle (shuffle)
 
 --type FFNet = Network '[ FullyConnected 30 1, Logit ]
 --                     '[ 'D1 30, 'D1 1, 'D1 1 ]
-type FFNet = Network '[ FullyConnected 30 40, Tanh, FullyConnected 40 1, Logit ]
-                     '[ 'D1 30, 'D1 40, 'D1 40, 'D1 1, 'D1 1 ]
+type FFNet = Network '[ FullyConnected 57 40, Tanh, FullyConnected 40 1, Logit ]
+                     '[ 'D1 57, 'D1 40, 'D1 40, 'D1 1, 'D1 1 ]
 --type FFNet n = Network '[ FullyConnected 30 n, Tanh, FullyConnected n 1, Logit ]
 --                     '[ 'D1 30, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
---type FFNet = Network '[ FullyConnected 30 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 1, Logit ]
---                     '[ 'D1 30, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 1, 'D1 1 ]
---type FFNet = Network '[ FullyConnected 30 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
---                     '[ 'D1 30, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 20, 'D1 20, 'D1 1, 'D1 1 ]
+--type FFNet = Network '[ FullyConnected 60 300, Tanh, FullyConnected 300 140, Tanh, FullyConnected 140 1, Logit ]
+--                     '[ 'D1 60, 'D1 300, 'D1 300, 'D1 140, 'D1 140, 'D1 1, 'D1 1 ]
+--type FFNet = Network '[ FullyConnected 60 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
+--                     '[ 'D1 60, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 20, 'D1 20, 'D1 1, 'D1 1 ]
 
-randomNet :: MonadRandom m => m FFNet
-randomNet = randomNetwork
-
+--netLoad :: KnownNat n => FilePath -> IO (FFNet n)
 netLoad :: FilePath -> IO FFNet
 netLoad modelPath = do
   modelData <- B.readFile modelPath
@@ -100,22 +108,41 @@ modelsParameters =
                    <*> optional (strOption (long "save"))
                    <*> optional (strOption (long "logs"))
 
+addLog :: KnownNat n => R n -> R n
+addLog a = signum a * log (abs a+1)
+
 main :: IO ()
 main = do
   ModelsParameters testPerc epochs norm rate load save logs <- execParser (info (modelsParameters <**> helper) idm)
 
+  let (seedNet, (seedShuffle, seedTraining)) = SR.split <$> SR.split (mkStdGen 487239842)
+
   net0 <- case load of
     Just loadFile -> netLoad loadFile
-    Nothing       -> randomNet
+    Nothing       -> return $ evalRand randomNetwork seedNet
 
-  let normFun = if norm then normalize else id
+  let normFun :: KnownNat n => [R n] -> [R n]
+      normFun = if norm then normalize else id
 
   -- Loading songs
-  songs <- normFun . fmap (song2SD labelSong) <$> getSongs filenameDataset
+  songsRaw <- fmap (song2TupleRn labelSong) <$> getSongs filenameDataset
+  let --songsDiscrete :: [R 3]
+      songsDiscrete = fmap (fst . fst) songsRaw
+      --songsFloat    :: [R 27]
+      songsFloat    = fmap (snd . fst) songsRaw
+      --songsLog      :: [R 27]
+      songsLog      = fmap addLog songsFloat
+      --songsLabel    :: [R 1]
+      songsLabel    = fmap snd songsRaw
+      --songs :: [(S ('D1 57), S ('D1 1))]
+      songs = (\(l1,l2,l3,o)->(S1D (l1#l2#l3), S1D o)) <$> zip4 songsDiscrete (normFun songsFloat) (normFun songsLog) songsLabel
 
-  let n = length songs
+  --print . toList . unwrap $ foldl1' (zipWithVector max) songsDiscrete
+  --print . toList . unwrap $ foldl1' (zipWithVector min) songsDiscrete
+
+  let n = length songsRaw
       -- Shuffling songs
-      shuffledSongs       = evalRand (shuffle songs) (mkStdGen 487239842)
+      shuffledSongs       = evalRand (shuffle songs) seedShuffle
       (testSet, trainSet) = splitAt (round $ fromIntegral n * testPerc) shuffledSongs
 
   {-
@@ -128,12 +155,12 @@ main = do
    -}
 
   -- Pretraining scores
-  --print $ head shuffledSongs
+  print $ head shuffledSongs
   putStrLn $ "Test Size: " <> show (length testSet)
 
   -- Training Net
-  nets <- evalRandIO $ epochTraining net0 rate trainSet epochs
-  let net = last nets
+  let nets = evalRand (epochTraining net0 rate trainSet epochs) seedTraining
+      net = last nets
       netsScores = fmap (\nn->(binaryNetError nn trainSet, binaryNetError nn testSet)) (net0:nets)
 
   -- Showing results of training net
@@ -141,7 +168,7 @@ main = do
     putStrLn $ "Training error: " <> show trainError <> "\tTesting error: " <> show testError
 
   case logs of
-    Just logsPath -> saveScores logsPath netsScores
+    Just logsPath -> saveScores logsPath $ fmap (fst *** fst) netsScores
     Nothing       -> return ()
 
   case save of

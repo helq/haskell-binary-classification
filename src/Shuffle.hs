@@ -3,13 +3,13 @@ module Shuffle (
 ) where
 
 import Control.Monad (forM, forM_)
-import Control.Monad.Random (RandomGen, Rand, getRandomR)
+import Control.Monad.Random (MonadRandom, getRandomR)
 import Data.Array.ST (runSTArray)
 import GHC.Arr (thawSTArray, writeSTArray, elems, listArray, readSTArray)
 
 -- copied from Haskell Wiki https://wiki.haskell.org/Random_shuffle
 
-shuffle :: RandomGen g => [a] -> Rand g [a]
+shuffle :: MonadRandom m => [a] -> m [a]
 shuffle xs = do
     let l = length xs
     rands <- forM [0..(l-2)] $ \i -> getRandomR (i, l-1)
