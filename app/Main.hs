@@ -21,7 +21,7 @@ import           Data.Semigroup ((<>))
 import           Options.Applicative (Parser, option, auto, optional, long, short, value
                                      , strOption, helper, idm, execParser, info, (<**>))
 import qualified Data.ByteString as B
-import           Data.Serialize (runPut, put, runGet, get, Get)
+import           Data.Serialize (runPut, put, runGet, get) --, Get
 
 import           Numeric.LinearAlgebra.Static ((#), (&), R, unwrap, konst) --, zipWithVector)
 import           Numeric.LinearAlgebra (toList)
@@ -32,25 +32,28 @@ import           Data.Singletons.TypeLits (KnownNat)
 import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1) --, Relu
                          , LearningParameters(..), randomNetwork, S(S1D))
 
-import           GrenadeExtras (binaryNetError, epochTraining, normalize, hotvector)
+import           GrenadeExtras (binaryNetError, epochTraining, trainOnBatchesEpochs, normalize, hotvector)
 import           GrenadeExtras.Zip (Zip)
 
 import           Song (Song(..), line2song, genre)
 import           Song.Grenade (song2TupleRn) --, SongSD)
 import           Shuffle (shuffle)
 
---type FFNet = Network '[ FullyConnected 30 1, Logit ]
---                     '[ 'D1 30, 'D1 1, 'D1 1 ]
+type FFNet = Network '[ FullyConnected 75 1, Logit ]
+                     '[ 'D1 75, 'D1 1, 'D1 1 ]
 --type FFNet = Network '[ FullyConnected 75 40, Tanh, FullyConnected 40 1, Logit ]
 --                     '[ 'D1 75, 'D1 40, 'D1 40, 'D1 1, 'D1 1 ]
 --type FFNet n = Network '[ FullyConnected 30 n, Tanh, FullyConnected n 1, Logit ]
 --                     '[ 'D1 30, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
-type FFNetForDiscrete = Network '[FullyConnected 21 10] '[ 'D1 21, 'D1 10 ]
-type FFNet = Network '[ Zip ('D1 21) ('D1 10) FFNetForDiscrete ('D1 54) ('D1 90) (FullyConnected 54 90),
-                        Tanh, FullyConnected 100 35,
-                        Tanh, FullyConnected 35 1,
-                        Logit ]
-                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 35, 'D1 35, 'D1 1, 'D1 1 ]
+
+--type FFNetForDiscrete = Network '[FullyConnected 21 10] '[ 'D1 21, 'D1 10 ]
+----type FFNetForDiscrete = Network '[FullyConnected 21 14, FullyConnected 14 10] '[ 'D1 21, 'D1 14, 'D1 10 ]
+--type FFNet = Network '[ Zip ('D1 21) ('D1 10) FFNetForDiscrete ('D1 54) ('D1 90) (FullyConnected 54 90),
+--                        Tanh, FullyConnected 100 35,
+--                        Tanh, FullyConnected 35 1,
+--                        Logit ]
+
+--                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 35, 'D1 35, 'D1 1, 'D1 1 ]
 --type FFNet = Network '[ FullyConnected 75 300, Tanh, FullyConnected 300 140, Tanh, FullyConnected 140 1, Logit ]
 --                     '[ 'D1 75, 'D1 300, 'D1 300, 'D1 140, 'D1 140, 'D1 1, 'D1 1 ]
 --type FFNet = Network '[ FullyConnected 60 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
@@ -60,7 +63,7 @@ type FFNet = Network '[ Zip ('D1 21) ('D1 10) FFNetForDiscrete ('D1 54) ('D1 90)
 netLoad :: FilePath -> IO FFNet
 netLoad modelPath = do
   modelData <- B.readFile modelPath
-  either fail return $ runGet (get :: Get FFNet) modelData
+  either fail return $ runGet get modelData
 
 saveScores :: FilePath -> [(Double, Double)] -> IO ()
 saveScores logsPath scores = writeFile logsPath (headScores<>"\n"<>scoresStr) -- TODO: catch IO Errors!
@@ -95,6 +98,7 @@ data ModelsParameters =
   ModelsParameters
     Float -- Size of test set
     Int   -- Number of epochs for training
+    Int   -- Size of batch
     Bool  -- Normalize data
     LearningParameters -- Parameters for Gradient Descent
     (Maybe FilePath) -- Load path
@@ -103,9 +107,10 @@ data ModelsParameters =
 
 modelsParameters :: Parser ModelsParameters
 modelsParameters =
-  ModelsParameters <$> option auto (long "test-set" <> short 't' <> value 0.15)
-                   <*> option auto (long "epochs"   <> short 'e' <> value 40)
-                   <*> option auto (long "normalize" <> value True)
+  ModelsParameters <$> option auto (long "test-set"   <> short 't' <> value 0.15)
+                   <*> option auto (long "epochs"     <> short 'e' <> value 40)
+                   <*> option auto (long "batch-size" <> short 'b' <> value 40)
+                   <*> option auto (long "normalize"  <> value True)
                    <*> (LearningParameters
                        <$> option auto (long "train_rate" <> short 'r' <> value 0.01)
                        <*> option auto (long "momentum" <> value 0.9)
@@ -126,7 +131,7 @@ discreteToOneHotVector featDiscre = (fromMaybe (konst 0) $ hotvector (round a)::
 
 main :: IO ()
 main = do
-  ModelsParameters testPerc epochs norm rate load save logs <- execParser (info (modelsParameters <**> helper) idm)
+  ModelsParameters testPerc epochs batchSize norm rate load save logs <- execParser (info (modelsParameters <**> helper) idm)
 
   let (seedNet, (seedShuffle, seedTraining)) = SR.split <$> SR.split (mkStdGen 487239842)
 
@@ -170,17 +175,21 @@ main = do
    -}
 
   -- Pretraining scores
-  print $ head shuffledSongs
+  --print $ head shuffledSongs
   putStrLn $ "Test Size: " <> show (length testSet)
+  putStrLn $ "Batch Size: " <> show batchSize
 
   -- Training Net
-  let nets = evalRand (epochTraining net0 rate trainSet epochs) seedTraining
+  let nets = evalRand (if batchSize == 1
+                       then trainOnBatchesEpochs net0 rate trainSet epochs batchSize
+                       else epochTraining net0 rate trainSet epochs)
+                      seedTraining
       net = last nets
       netsScores = fmap (\nn->(binaryNetError nn trainSet, binaryNetError nn testSet)) (net0:nets)
 
   -- Showing results of training net
-  forM_ netsScores $ \(trainError, testError) ->
-    putStrLn $ "Training error: " <> show trainError <> "\tTesting error: " <> show testError
+  forM_ (zip [(1::Integer)..] netsScores) $ \(epoch, (trainError, testError)) ->
+    putStrLn $ "Epoch " <> show epoch <> "\tTraining error: " <> show trainError <> "\tTesting error: " <> show testError
 
   case logs of
     Just logsPath -> saveScores logsPath $ fmap (fst *** fst) netsScores
