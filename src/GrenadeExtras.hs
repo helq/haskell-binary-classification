@@ -12,7 +12,8 @@ module GrenadeExtras (
   trainOnBatchesEpochs,
   binaryNetError,
   normalize,
-  hotvector
+  hotvector,
+  applyUpdates
 ) where
 
 import           Shuffle (shuffle)
@@ -30,10 +31,10 @@ import           Numeric.LinearAlgebra.Data (Vector, (!))
 
 import           GHC.TypeLits (KnownNat)
 
-import           Grenade (Network, Shape(D1), LearningParameters, runNet, S(S1D),
-                          Gradients, backPropagate, applyUpdate, train)
+import           Grenade (Network((:~>), NNil), Shape(D1), LearningParameters, runNet, S(S1D),
+                          Gradients((:/>)), backPropagate, train, runUpdates, Gradient)
 
-trainOnBatchesEpochs :: (SingI (Last shapes), MonadRandom m, Num (Gradients layers))
+trainOnBatchesEpochs :: (SingI (Last shapes), MonadRandom m)
                  => Network layers shapes
                  -> LearningParameters
                  -> [(S (Head shapes), S (Last shapes))]
@@ -49,14 +50,13 @@ trainOnBatchesEpochs net0 rate input_data batchSize =
       return newNet
 
   where
-    trainBatch :: (SingI (Last shapes), Num (Gradients layers))
+    trainBatch :: SingI (Last shapes)
                => Network layers shapes
                -> [(S (Head shapes), S (Last shapes))]
                -> Network layers shapes
     trainBatch !network ios =
       let grads = fmap (uncurry $ backPropagate network) ios
-          grad = sum grads -- / fromIntegral len
-       in applyUpdate rate network grad
+       in applyUpdates rate network grads
 
     --len = length input_data
 
@@ -65,6 +65,19 @@ trainOnBatchesEpochs net0 rate input_data batchSize =
     splitInBatches xs =
       let (start, finish) = splitAt batchSize xs
        in start : splitInBatches finish
+
+applyUpdates :: LearningParameters
+             -> Network layers shapes
+             -> [Gradients layers]
+             -> Network layers shapes
+applyUpdates rate (layer :~> rest) gradients
+  = runUpdates rate layer layerGradients :~> applyUpdates rate rest restLayersGradients
+    where headTailGrad :: Gradients (layer ': layers) -> (Gradient layer, Gradients layers)
+          headTailGrad (gradient :/> grest) = (gradient, grest)
+          (layerGradients, restLayersGradients) = unzip $ fmap headTailGrad gradients
+
+applyUpdates _ NNil _
+  = NNil
 
 epochTraining :: (SingI (Last shapes), MonadRandom m) =>
                  Network layers shapes

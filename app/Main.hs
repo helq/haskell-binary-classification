@@ -34,7 +34,7 @@ import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1), -- Re
 
 import           GrenadeExtras (binaryNetError, epochTraining, trainOnBatchesEpochs, normalize, hotvector)
 import           GrenadeExtras.Zip (Zip)
-import           GrenadeExtras.Orphan()
+--import           GrenadeExtras.Orphan()
 
 import           Song (Song, line2song, genre)
 import           Song.Grenade (song2TupleRn) --, SongSD)
