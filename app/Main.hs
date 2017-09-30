@@ -1,6 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Main where
 
@@ -8,9 +12,7 @@ import           Lens.Micro.Extras (view)
 import qualified Data.Text.IO as Text (readFile)
 import           Data.Text (lines)
 import           Data.Maybe (mapMaybe, fromMaybe)
-import           Data.List (zip4) --, foldl1')
-
-import           Control.Arrow ((***))
+import           Data.List (zip4) --, foldl')
 
 import           Control.Monad (forM_)
 import           Control.Monad.Random (evalRand)
@@ -21,7 +23,7 @@ import           Data.Semigroup ((<>))
 import           Options.Applicative (Parser, option, auto, optional, long, short, value
                                      , strOption, helper, idm, execParser, info, (<**>))
 import qualified Data.ByteString as B
-import           Data.Serialize (runPut, put, runGet, get) --, Get
+import           Data.Serialize (Serialize(..), runPut, put, runGet, get) --, Get
 
 import           Numeric.LinearAlgebra.Static ((#), (&), R, unwrap, konst) --, zipWithVector)
 import           Numeric.LinearAlgebra (toList)
@@ -29,23 +31,28 @@ import           Numeric.LinearAlgebra (toList)
 --import           GHC.TypeLits
 import           Data.Singletons.TypeLits (KnownNat)
 
-import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1), -- Relu,
+import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1), --Relu,
                          LearningParameters(LearningParameters), randomNetwork, S(S1D))
 
-import           GrenadeExtras (binaryNetError, epochTraining, trainOnBatchesEpochs, normalize, hotvector)
-import           GrenadeExtras.Zip (Zip)
+import           GrenadeExtras (binaryNetError, trainOnBatchesEpochs, normalize, hotvector)
+--import           GrenadeExtras.Zip (Zip)
 --import           GrenadeExtras.Orphan()
+--import           GrenadeExtras.GradNorm
 
 import           Song (Song, line2song, genre)
 import           Song.Grenade (song2TupleRn) --, SongSD)
 import           Shuffle (shuffle)
 
+--import           Debug.Trace (trace)
+
 --type FFNet = Network '[ FullyConnected 75 1, Logit ]
 --                     '[ 'D1 75, 'D1 1, 'D1 1 ]
-type FFNet = Network '[ FullyConnected 75 16, Tanh, FullyConnected 16 1, Logit ]
-                     '[ 'D1 75, 'D1 16, 'D1 16, 'D1 1, 'D1 1 ]
+type FFNet n = Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
+                       '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
 --type FFNet n = Network '[ FullyConnected 30 n, Tanh, FullyConnected n 1, Logit ]
 --                     '[ 'D1 30, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
+
+--instance KnownNat n => Serialize (FFNet n)
 
 --type FFNetForDiscrete = Network '[FullyConnected 21 10] '[ 'D1 21, 'D1 10 ]
 ----type FFNetForDiscrete = Network '[FullyConnected 21 14, FullyConnected 14 10] '[ 'D1 21, 'D1 14, 'D1 10 ]
@@ -57,11 +64,11 @@ type FFNet = Network '[ FullyConnected 75 16, Tanh, FullyConnected 16 1, Logit ]
 --                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 35, 'D1 35, 'D1 1, 'D1 1 ]
 --type FFNet = Network '[ FullyConnected 75 300, Tanh, FullyConnected 300 140, Tanh, FullyConnected 140 1, Logit ]
 --                     '[ 'D1 75, 'D1 300, 'D1 300, 'D1 140, 'D1 140, 'D1 1, 'D1 1 ]
---type FFNet = Network '[ FullyConnected 60 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
---                     '[ 'D1 60, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 20, 'D1 20, 'D1 1, 'D1 1 ]
+--type FFNet = Network '[ FullyConnected 75 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
+--                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 20, 'D1 20, 'D1 1, 'D1 1 ]
 
---netLoad :: KnownNat n => FilePath -> IO (FFNet n)
-netLoad :: FilePath -> IO FFNet
+netLoad :: KnownNat n => FilePath -> IO (Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
+                                                 '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ])
 netLoad modelPath = do
   modelData <- B.readFile modelPath
   either fail return $ runGet get modelData
@@ -75,13 +82,18 @@ netLoad modelPath = do
 --      let (start, finish) = splitAt size xs
 --       in start : splitInSizes finish
 
-saveScores :: FilePath -> [(Double, Double)] -> IO ()
+saveScores :: FilePath -> [NetScore] -> IO ()
 saveScores logsPath scores = writeFile logsPath (headScores<>"\n"<>scoresStr) -- TODO: catch IO Errors!
   where
     scoresStr :: String
-    scoresStr = mconcat $ fmap (\(tr,te)-> show tr <> "\t" <> show te <> "\n") scores
+    scoresStr = mconcat $ fmap netScore2String scores
 
-    headScores = "train_error\ttest_error"
+    netScore2String NetScore{..} = show trainClassError <> "\t"
+                                <> show trainingError   <> "\t"
+                                <> show testClassError  <> "\t"
+                                <> show gradientNorm    <> "\n"
+
+    headScores = "train_classification_error\ttrain_error\ttest_classification_error\tgradient_norm"
 
 -- Reading data and running code
 
@@ -104,10 +116,16 @@ labelSong :: String -> Double
 labelSong "dance and electronica" = 1
 labelSong _                       = 0
 
+data StoppingCondition = StoppingCondition { -- stop training if either:
+  maxEpochs           :: Int,           -- maximum total epochs has been reached
+  gradientSmallerthan :: (Double, Int), -- gradient is smaller than `d` for at least `i` consecutive epochs
+  stuckInARange       :: (Double, Int)  -- or, the error hasn't changed more than `d` in the last `i` consecutive epochs
+  }
+
 data ModelsParameters =
   ModelsParameters
     Float -- Size of test set
-    Int   -- Number of epochs for training
+    StoppingCondition
     Int   -- Size of batch
     Bool  -- Normalize data
     LearningParameters -- Parameters for Gradient Descent
@@ -118,13 +136,17 @@ data ModelsParameters =
 modelsParameters :: Parser ModelsParameters
 modelsParameters =
   ModelsParameters <$> option auto (long "test-set"   <> short 't' <> value 0.15)
-                   <*> option auto (long "epochs"     <> short 'e' <> value 40)
+                   <*> ( StoppingCondition
+                         <$> option auto (long "epochs" <> short 'e' <> value 300)
+                         <*> option auto (long "gradient-smaller" <> short 'g' <> value (0.09, 2))
+                         <*> option auto (long "max-error-change" <> value (0.004, 10))
+                       )
                    <*> option auto (long "batch-size" <> short 'b' <> value 40)
                    <*> option auto (long "normalize"  <> value True)
                    <*> (LearningParameters
                        <$> option auto (long "train_rate" <> short 'r' <> value 0.01)
                        <*> option auto (long "momentum" <> value 0.9)
-                       <*> option auto (long "l2" <> value 0.0005)
+                       <*> option auto (long "l2" <> value 0) -- 0.0005
                        )
                    <*> optional (strOption (long "load"))
                    <*> optional (strOption (long "save"))
@@ -139,15 +161,56 @@ discreteToOneHotVector featDiscre = (fromMaybe (konst 0) $ hotvector (round a)::
                                   & c
   where [a,b,c] = toList $ unwrap featDiscre
 
+takeWhileCond :: ([a] -> [b]) -> (b -> Bool) -> [a] -> [a]
+takeWhileCond toCond stopCond xs = fmap snd . takeWhile (stopCond . fst) $ zip (toCond xs) xs
+
+data NetScore = NetScore {
+  trainClassError :: Double, -- Classification training error
+  trainingError   :: Double, -- (optimization) training error
+  testClassError  :: Double, -- Classification testing error
+  gradientNorm    :: Double  -- accumulated norm of the gradients on an epoch
+} deriving (Show)
+
+netScore trainSet testSet (gradNorm, nn) =
+  let (trainCE, trainE) = binaryNetError nn trainSet
+      (testCE, _)       = binaryNetError nn testSet
+   in
+      NetScore { trainClassError = trainCE,
+                 trainingError   = trainE,
+                 testClassError  = testCE,
+                 gradientNorm    = gradNorm }
+
+takeWhileCondFunc :: Show a => StoppingCondition -> [(a, NetScore)] -> [(a, NetScore)]
+takeWhileCondFunc (StoppingCondition epochs (grad, giters) (stuck, siters)) =
+ -- trace ("hi" <> show (head (takeWhileCond maxErrorChangeInSIters (<stuck) xs))) .
+  take (epochs+1) . takeWhileCond consecutiveSmallerThanGrad (<giters)
+                  . takeWhileCond maxErrorChangeInSIters (>stuck)
+  where
+    consecutiveSmallerThanGrad :: [(a, NetScore)] -> [Int]
+    consecutiveSmallerThanGrad = (0:) . countConsecutive (0::Int) . fmap (trainClassError . snd)
+      where
+        countConsecutive _    []     = []
+        countConsecutive cond (x:xs) =
+          let condVal = if x<grad then cond+1 else 0
+           in condVal : countConsecutive condVal xs
+
+    maxErrorChangeInSIters :: [(a, NetScore)] -> [Double]
+    maxErrorChangeInSIters = (replicate siters (stuck+1) <>) . fmap findMaxChange . groupOnSIters . fmap (trainClassError . snd)
+      where groupOnSIters :: [a] -> [[a]]
+            groupOnSIters []         = []
+            groupOnSIters xs@(_:xs') = take siters xs : groupOnSIters xs'
+            findMaxChange :: [Double] -> Double
+            findMaxChange xs = maximum xs - minimum xs
+
 main :: IO ()
 main = do
-  ModelsParameters testPerc epochs batchSize norm rate load save logs <- execParser (info (modelsParameters <**> helper) idm)
+  ModelsParameters testPerc stopCond batchSize norm rate load save logs <- execParser (info (modelsParameters <**> helper) idm)
 
   let (seedNet, (seedShuffle, seedTraining)) = SR.split <$> SR.split (mkStdGen 487239842)
 
-  net0 <- case load of
-    Just loadFile -> netLoad loadFile
-    Nothing       -> return $ evalRand randomNetwork seedNet
+  (net0 :: FFNet 2) <- case load of
+     Just loadFile -> netLoad loadFile
+     Nothing       -> return $ evalRand randomNetwork seedNet
 
   let normFun :: KnownNat n => [R n] -> [R n]
       normFun = if norm then normalize else id
@@ -178,8 +241,9 @@ main = do
   {-
    -case net0 of
    -  x@(FullyConnected (FullyConnected' i o) _) :~> _ -> do
-   -    let subnet = x :~> NNil :: Network '[FullyConnected 30 1] '[ 'D1 30, 'D1 1 ]
-   -    print $ runNet subnet (S1D 0) -- with this we get the biases
+   -    let subnet = x :~> NNil :: Network '[FullyConnected 75 1] '[ 'D1 75, 'D1 1 ]
+   -    --print $ runNet subnet (S1D 0) -- with this we get the biases
+   -    --print . sqrt . normSquared $ net0
    -    print i -- biases for each output neuron
    -    print o -- weights between neurons
    -}
@@ -190,19 +254,27 @@ main = do
   putStrLn $ "Batch Size: " <> show batchSize
 
   -- Training Net
-  let nets = take epochs $ evalRand (if batchSize > 1
-                                     then trainOnBatchesEpochs net0 rate trainSet batchSize
-                                     else epochTraining net0 rate trainSet)
-                                    seedTraining
-      net = last nets
-      netsScores = fmap (\nn->(binaryNetError nn trainSet, binaryNetError nn testSet)) (net0:nets)
+  let netsInf = (read "Infinity", net0) : evalRand (trainOnBatchesEpochs net0 rate trainSet batchSize) seedTraining
+      netsScoresInf = fmap (netScore trainSet testSet) netsInf
 
+      (nets, netsScores) = unzip . takeWhileCondFunc stopCond $ zip (fmap snd netsInf) netsScoresInf
+      net = last nets
+
+  putStrLn $ "Epoch"
+           <> "\tTraining classification error"
+           <> "\tTraining error"
+           <> "\tGradNorm"
+           <> "\tTesting error"
   -- Showing results of training net
-  forM_ (zip [(0::Integer)..] netsScores) $ \(epoch, (trainError, testError)) ->
-    putStrLn $ "Epoch " <> show epoch <> "\tTraining error: " <> show trainError <> "\tTesting error: " <> show testError
+  forM_ (zip [(0::Integer)..] netsScores) $ \(epoch, NetScore trainCE trainE testE gradNorm) ->
+    putStrLn $ show epoch
+             <> "\t" <> show trainCE
+             <> "\t" <> show trainE
+             <> "\t" <> show gradNorm
+             <> "\t" <> show testE
 
   case logs of
-    Just logsPath -> saveScores logsPath $ fmap (fst *** fst) netsScores
+    Just logsPath -> saveScores logsPath netsScores
     Nothing       -> return ()
 
   case save of

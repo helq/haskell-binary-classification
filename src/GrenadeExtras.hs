@@ -32,31 +32,37 @@ import           Numeric.LinearAlgebra.Data (Vector, (!))
 import           GHC.TypeLits (KnownNat)
 
 import           Grenade (Network((:~>), NNil), Shape(D1), LearningParameters, runNet, S(S1D),
-                          Gradients((:/>)), backPropagate, train, runUpdates, Gradient)
+                          Gradients((:/>)), backPropagate, train, runUpdates, Gradient, applyUpdate)
 
-trainOnBatchesEpochs :: (SingI (Last shapes), MonadRandom m)
+import           GrenadeExtras.OrphanNum()
+import           GrenadeExtras.GradNorm (GradNorm(normSquared))
+
+trainOnBatchesEpochs :: (SingI (Last shapes), MonadRandom m, Num (Gradients layers), GradNorm (Gradients layers))
                  => Network layers shapes
                  -> LearningParameters
                  -> [(S (Head shapes), S (Last shapes))]
                  -> Int
-                 -> m [Network layers shapes]
+                 -> m [(Double, Network layers shapes)]
 trainOnBatchesEpochs net0 rate input_data batchSize =
 
-    foldMeOutList net0 [(1::Int)..] $ \net _-> do
+    foldMeOutList (0, net0) [(1::Int)..] $ \(_,net) _-> do
       shuffledInput <- shuffle input_data
       -- traning net (an epoch) with the input shuffled
       let batches = splitInBatches shuffledInput
-          newNet = foldl' trainBatch net batches
-      return newNet
+          (gradientNorm, newNet) = foldl' trainBatch (0, net) batches
+      return (gradientNorm, newNet)
 
   where
-    trainBatch :: SingI (Last shapes)
-               => Network layers shapes
+    trainBatch :: (SingI (Last shapes), Num (Gradients layers), GradNorm (Gradients layers))
+               => (Double, Network layers shapes)
                -> [(S (Head shapes), S (Last shapes))]
-               -> Network layers shapes
-    trainBatch !network ios =
+               -> (Double, Network layers shapes)
+    trainBatch (accNorm, !network) ios =
       let grads = fmap (uncurry $ backPropagate network) ios
-       in applyUpdates rate network grads
+          grad = sum grads
+          norm = sqrt $ normSquared grad
+       in (accNorm+norm, applyUpdate rate network grad)
+       --in applyUpdates rate network grads
 
     --len = length input_data
 
@@ -122,9 +128,8 @@ binaryNetError net test = (fromIntegral errors / fromIntegral total, distance)
         e' = if (label > 0.5) == (netOut > 0.5)
                 then e
                 else e+1
-        d' = d + abs (label - netOut)
+        d' = d + (label - netOut)^(2::Int)
 
---    valueFromDataAndNet :: SongSD -> (Double, Double)
     valueFromDataAndNet (input, label) = over both sd1toDouble (label, runNet net input)
       where
         sd1toDouble :: S ('D1 1) -> Double

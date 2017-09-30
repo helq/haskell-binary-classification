@@ -4,12 +4,12 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE TypeFamilies      #-}
 
-module GrenadeExtras.Orphan () where
+module GrenadeExtras.OrphanNum () where
 
 import GHC.TypeLits (KnownNat)
 
 import Grenade (Gradient, Gradients(GNil, (:/>)), FullyConnected(FullyConnected), FullyConnected'(FullyConnected'),
-                Logit(Logit), Tanh(Tanh), UpdateLayer)
+                Logit(Logit), Tanh(Tanh), Relu(Relu), UpdateLayer)
 
 instance (KnownNat i, KnownNat o) => Num (FullyConnected' i o) where
   (FullyConnected' r1 l1) + (FullyConnected' r2 l2) = FullyConnected' (r1+r2) (l1+l2)
@@ -55,6 +55,15 @@ instance Num Tanh where
   signum Tanh = Tanh
   negate Tanh = Tanh
   fromInteger _ = Tanh
+
+instance Num Relu where
+  Relu + Relu = Relu
+  Relu - Relu = Relu
+  Relu * Relu = Relu
+  abs Relu = Relu
+  signum Relu = Relu
+  negate Relu = Relu
+  fromInteger _ = Relu
 
 instance Num (Gradients '[]) where
   GNil + GNil = GNil

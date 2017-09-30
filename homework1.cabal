@@ -21,7 +21,8 @@ library
                      , Shuffle
                      , GrenadeExtras
                      , GrenadeExtras.Zip
-                     , GrenadeExtras.Orphan
+                     , GrenadeExtras.OrphanNum
+                     , GrenadeExtras.GradNorm
   build-depends:       base >= 4.7 && < 5
                      , megaparsec
                      , microlens-th
