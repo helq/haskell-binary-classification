@@ -9,8 +9,8 @@ module Song.Grenade (
 , song2TupleRn
 ) where
 
-import Song (Song(..))
-import Grenade (S(S1D), Shape(..))
+import Song (Song(Song, _genre, _loudness, _tempo, _timeSignature, _key, _mode, _duration, _avgTimbre, _varTimbre))
+import Grenade (S(S1D), Shape(D1))
 import Numeric.LinearAlgebra.Static (R, konst, vector, (#), (&))
 import Control.Arrow ((***), first)
 

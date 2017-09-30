@@ -29,20 +29,21 @@ import           Numeric.LinearAlgebra (toList)
 --import           GHC.TypeLits
 import           Data.Singletons.TypeLits (KnownNat)
 
-import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1) --, Relu
-                         , LearningParameters(..), randomNetwork, S(S1D))
+import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1), -- Relu,
+                         LearningParameters(LearningParameters), randomNetwork, S(S1D))
 
 import           GrenadeExtras (binaryNetError, epochTraining, trainOnBatchesEpochs, normalize, hotvector)
 import           GrenadeExtras.Zip (Zip)
+import           GrenadeExtras.Orphan()
 
-import           Song (Song(..), line2song, genre)
+import           Song (Song, line2song, genre)
 import           Song.Grenade (song2TupleRn) --, SongSD)
 import           Shuffle (shuffle)
 
-type FFNet = Network '[ FullyConnected 75 1, Logit ]
-                     '[ 'D1 75, 'D1 1, 'D1 1 ]
---type FFNet = Network '[ FullyConnected 75 40, Tanh, FullyConnected 40 1, Logit ]
---                     '[ 'D1 75, 'D1 40, 'D1 40, 'D1 1, 'D1 1 ]
+--type FFNet = Network '[ FullyConnected 75 1, Logit ]
+--                     '[ 'D1 75, 'D1 1, 'D1 1 ]
+type FFNet = Network '[ FullyConnected 75 16, Tanh, FullyConnected 16 1, Logit ]
+                     '[ 'D1 75, 'D1 16, 'D1 16, 'D1 1, 'D1 1 ]
 --type FFNet n = Network '[ FullyConnected 30 n, Tanh, FullyConnected n 1, Logit ]
 --                     '[ 'D1 30, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
 
@@ -64,6 +65,15 @@ netLoad :: FilePath -> IO FFNet
 netLoad modelPath = do
   modelData <- B.readFile modelPath
   either fail return $ runGet get modelData
+
+--createKFoldPartitions :: Int -> [a] -> [([a],[a])]
+--createKFoldPartitions size = takeWhile  . splitInSizes
+--  where
+--    splitInSizes :: [a] -> [[a]]
+--    splitInSizes [] = []
+--    splitInSizes xs =
+--      let (start, finish) = splitAt size xs
+--       in start : splitInSizes finish
 
 saveScores :: FilePath -> [(Double, Double)] -> IO ()
 saveScores logsPath scores = writeFile logsPath (headScores<>"\n"<>scoresStr) -- TODO: catch IO Errors!
@@ -180,15 +190,15 @@ main = do
   putStrLn $ "Batch Size: " <> show batchSize
 
   -- Training Net
-  let nets = evalRand (if batchSize == 1
-                       then trainOnBatchesEpochs net0 rate trainSet epochs batchSize
-                       else epochTraining net0 rate trainSet epochs)
-                      seedTraining
+  let nets = take epochs $ evalRand (if batchSize > 1
+                                     then trainOnBatchesEpochs net0 rate trainSet batchSize
+                                     else epochTraining net0 rate trainSet)
+                                    seedTraining
       net = last nets
       netsScores = fmap (\nn->(binaryNetError nn trainSet, binaryNetError nn testSet)) (net0:nets)
 
   -- Showing results of training net
-  forM_ (zip [(1::Integer)..] netsScores) $ \(epoch, (trainError, testError)) ->
+  forM_ (zip [(0::Integer)..] netsScores) $ \(epoch, (trainError, testError)) ->
     putStrLn $ "Epoch " <> show epoch <> "\tTraining error: " <> show trainError <> "\tTesting error: " <> show testError
 
   case logs of

@@ -12,8 +12,7 @@ module GrenadeExtras (
   trainOnBatchesEpochs,
   binaryNetError,
   normalize,
-  hotvector,
-  FullyConnected'(..)
+  hotvector
 ) where
 
 import           Shuffle (shuffle)
@@ -26,113 +25,23 @@ import           Lens.Micro (over, both)--Lens', set)
 import           Data.Singletons (SingI)
 import           Data.Singletons.Prelude (Head, Last)
 
-import           Numeric.LinearAlgebra.Static (extract, R, ℝ, toRows, eye, L)
+import           Numeric.LinearAlgebra.Static (extract, R, ℝ, toRows, eye)
 import           Numeric.LinearAlgebra.Data (Vector, (!))
 
 import           GHC.TypeLits (KnownNat)
 
-import           Grenade (Network, Shape(D1), LearningParameters(..), runNet, S(S1D),
-                          Gradient, Gradients(..), FullyConnected(..), FullyConnected'(..), Logit(..), UpdateLayer,
-                          backPropagate, applyUpdate, train)
+import           Grenade (Network, Shape(D1), LearningParameters, runNet, S(S1D),
+                          Gradients, backPropagate, applyUpdate, train)
 
-instance (KnownNat i, KnownNat o) => Num (FullyConnected' i o) where
-  (FullyConnected' r1 l1) + (FullyConnected' r2 l2) = FullyConnected' (r1+r2) (l1+l2)
-  (FullyConnected' r1 l1) - (FullyConnected' r2 l2) = FullyConnected' (r1-r2) (l1-l2)
-  (FullyConnected' r1 l1) * (FullyConnected' r2 l2) = FullyConnected' (r1*r2) (l1*l2)
-  abs    (FullyConnected' r l) = FullyConnected' (abs r) (abs l)
-  signum (FullyConnected' r l) = FullyConnected' (signum r) (signum l)
-  negate (FullyConnected' r l) = FullyConnected' (negate r) (negate l)
-  fromInteger i = FullyConnected' (fromInteger i) (fromInteger i)
-
-instance (KnownNat i, KnownNat o) => Fractional (FullyConnected' i o) where
-  (FullyConnected' r1 l1) / (FullyConnected' r2 l2) = FullyConnected' (r1/r2) (l1/l2)
-  recip (FullyConnected' r l) = FullyConnected' (recip r) (recip l)
-  fromRational i = FullyConnected' (fromRational i) (fromRational i)
-
-instance (KnownNat i, KnownNat o) => Num (FullyConnected i o) where
-  (FullyConnected w1 m1) + (FullyConnected w2 m2) = FullyConnected (w1+w2) (m1+m2)
-  (FullyConnected w1 m1) - (FullyConnected w2 m2) = FullyConnected (w1-w2) (m1-m2)
-  (FullyConnected w1 m1) * (FullyConnected w2 m2) = FullyConnected (w1*w2) (m1*m2)
-  abs    (FullyConnected w m) = FullyConnected (abs w) (abs m)
-  signum (FullyConnected w m) = FullyConnected (signum w) (signum m)
-  negate (FullyConnected w m) = FullyConnected (negate w) (negate m)
-  fromInteger i = FullyConnected (fromInteger i) (fromInteger i)
-
-instance (KnownNat i, KnownNat o) => Fractional (FullyConnected i o) where
-  (FullyConnected w1 m1) / (FullyConnected w2 m2) = FullyConnected (w1/w2) (m1/m2)
-  recip (FullyConnected w m) = FullyConnected (recip w) (recip m)
-  fromRational i = FullyConnected (fromRational i) (fromRational i)
-
-instance Num () where
-  () + () = ()
-  () - () = ()
-  () * () = ()
-  abs () = ()
-  signum () = ()
-  negate () = ()
-  fromInteger _ = ()
-
-instance Fractional () where
-  () / () = ()
-  recip () = ()
-  fromRational _ = ()
-
-instance Num Logit where
-  Logit + Logit = Logit
-  Logit - Logit = Logit
-  Logit * Logit = Logit
-  abs Logit = Logit
-  signum Logit = Logit
-  negate Logit = Logit
-  fromInteger _ = Logit
-
-instance Fractional Logit where
-  Logit / Logit = Logit
-  recip Logit = Logit
-  fromRational _ = Logit
-
-instance Num (Gradients '[]) where
-  GNil + GNil = GNil
-  GNil - GNil = GNil
-  GNil * GNil = GNil
-  abs GNil = GNil
-  signum GNil = GNil
-  negate GNil = GNil
-  fromInteger _ = GNil
-
-instance Fractional (Gradients '[]) where
-  GNil / GNil = GNil
-  recip GNil = GNil
-  fromRational _ = GNil
-
-instance (Num x, Num (Gradients xs), Num (Gradient x), UpdateLayer x) => Num (Gradients (x ': xs)) where
-  (l1 :/> ls1) + (l2 :/> ls2) = (l1+l2) :/> (ls1+ls2)
-  (l1 :/> ls1) - (l2 :/> ls2) = (l1-l2) :/> (ls1-ls2)
-  (l1 :/> ls1) * (l2 :/> ls2) = (l1*l2) :/> (ls1*ls2)
-  abs    (l :/> ls) = abs    l :/> abs    ls
-  signum (l :/> ls) = signum l :/> signum ls
-  negate (l :/> ls) = negate l :/> negate ls
-  fromInteger i = fromInteger i :/> fromInteger i
-
-instance (Fractional x,
-          Fractional (Gradients xs),
-          Fractional (Gradient x),
-          UpdateLayer x)
-         => Fractional (Gradients (x ': xs)) where
-  (l1 :/> ls1) / (l2 :/> ls2) = (l1/l2) :/> (ls1/ls2)
-  recip (l :/> ls) = recip l :/> recip ls
-  fromRational i = fromRational i :/> fromRational i
-
-trainOnBatchesEpochs :: (SingI (Last shapes), MonadRandom m, Num (Gradients layers), Fractional (Gradients layers))
+trainOnBatchesEpochs :: (SingI (Last shapes), MonadRandom m, Num (Gradients layers))
                  => Network layers shapes
                  -> LearningParameters
                  -> [(S (Head shapes), S (Last shapes))]
                  -> Int
-                 -> Int
                  -> m [Network layers shapes]
-trainOnBatchesEpochs net0 rate input_data epochs batchSize =
+trainOnBatchesEpochs net0 rate input_data batchSize =
 
-    foldMeOutList net0 [1..epochs::Int] $ \net _-> do
+    foldMeOutList net0 [(1::Int)..] $ \net _-> do
       shuffledInput <- shuffle input_data
       -- traning net (an epoch) with the input shuffled
       let batches = splitInBatches shuffledInput
@@ -140,16 +49,16 @@ trainOnBatchesEpochs net0 rate input_data epochs batchSize =
       return newNet
 
   where
-    trainBatch :: (SingI (Last shapes), Num (Gradients layers), Fractional (Gradients layers))
+    trainBatch :: (SingI (Last shapes), Num (Gradients layers))
                => Network layers shapes
                -> [(S (Head shapes), S (Last shapes))]
                -> Network layers shapes
     trainBatch !network ios =
       let grads = fmap (uncurry $ backPropagate network) ios
-          grad = sum grads / fromIntegral len
+          grad = sum grads -- / fromIntegral len
        in applyUpdate rate network grad
 
-    len = length input_data
+    --len = length input_data
 
     splitInBatches :: [a] -> [[a]]
     splitInBatches [] = []
@@ -161,11 +70,10 @@ epochTraining :: (SingI (Last shapes), MonadRandom m) =>
                  Network layers shapes
                  -> LearningParameters
                  -> [(S (Head shapes), S (Last shapes))]
-                 -> Int
                  -> m [Network layers shapes]
-epochTraining net0 rate input_data epochs =
+epochTraining net0 rate input_data =
 
-    foldMeOutList net0 [1..epochs::Int] $ \net _-> do
+    foldMeOutList net0 [(1::Int)..] $ \net _-> do
       shuffledInput <- shuffle input_data
       -- traning net (an epoch) with the input shuffled
       let newNet = foldl' trainEach net shuffledInput

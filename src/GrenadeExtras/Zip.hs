@@ -12,12 +12,13 @@ module GrenadeExtras.Zip (
   Zip (..),
 ) where
 
-import           Data.Serialize
+import           Data.Serialize (Serialize, put, get)
 
 --import           Data.Singletons
 import           GHC.TypeLits
 
-import           Grenade.Core
+import           Grenade.Core (UpdateLayer, Layer, Shape(D1), S(S1D), Gradient,
+                               runForwards, runBackwards, runUpdate, createRandom, Tape)
 
 import           Numeric.LinearAlgebra.Static ((#), split, R) -- row, (===), splitRows, unrow
 
