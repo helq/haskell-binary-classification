@@ -5,6 +5,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE TypeApplications  #-}
 
 module Main where
 
@@ -29,7 +31,8 @@ import           Numeric.LinearAlgebra.Static ((#), (&), R, unwrap, konst) --, z
 import           Numeric.LinearAlgebra (toList)
 
 --import           GHC.TypeLits
-import           Data.Singletons.TypeLits (KnownNat)
+import           Data.Singletons -- (KnownNat, Nat, Sing)
+import           Data.Singletons.TypeLits -- (KnownNat, Nat, Sing)
 
 import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1), --Relu,
                          LearningParameters(LearningParameters), randomNetwork, S(S1D))
@@ -47,8 +50,15 @@ import           Shuffle (shuffle)
 
 --type FFNet = Network '[ FullyConnected 75 1, Logit ]
 --                     '[ 'D1 75, 'D1 1, 'D1 1 ]
-type FFNet n = Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
-                       '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
+type OneHiddenLayer n = Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
+                                '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
+
+--extractNetFromOneHidden :: forall n . OneHiddenLayer n -> Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
+--                                                                     '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
+--extractNetFromOneHidden (OneHiddenLayer net) = net
+
+--data OneHiddenLayer :: Nat -> * where
+--  OHLayer :: Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ] '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ] -> OneHiddenLayer n
 --type FFNet n = Network '[ FullyConnected 30 n, Tanh, FullyConnected n 1, Logit ]
 --                     '[ 'D1 30, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
 
@@ -67,20 +77,31 @@ type FFNet n = Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
 --type FFNet = Network '[ FullyConnected 75 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
 --                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 20, 'D1 20, 'D1 1, 'D1 1 ]
 
-netLoad :: KnownNat n => FilePath -> IO (Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
-                                                 '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ])
+--netLoad :: KnownNat n => FilePath -> IO (OneHiddenLayer n)
+netLoad :: Serialize b => FilePath -> IO b
 netLoad modelPath = do
   modelData <- B.readFile modelPath
   either fail return $ runGet get modelData
 
---createKFoldPartitions :: Int -> [a] -> [([a],[a])]
---createKFoldPartitions size = takeWhile  . splitInSizes
---  where
---    splitInSizes :: [a] -> [[a]]
---    splitInSizes [] = []
---    splitInSizes xs =
---      let (start, finish) = splitAt size xs
---       in start : splitInSizes finish
+createKFoldPartitions :: Int -> [a] -> (Int, [([a],[a])])
+createKFoldPartitions size ks = (parts, take parts . separateTrainAndValidLists . splitInSizes $ ks)
+  where
+    len = length ks
+    parts = floor $ fromIntegral len / (fromIntegral size :: Double)
+
+    splitInSizes :: [a] -> [[a]]
+    splitInSizes [] = []
+    splitInSizes xs =
+      let (start, finish) = splitAt size xs
+       in start : splitInSizes finish
+
+    separateTrainAndValidLists :: [[a]] -> [([a], [a])]
+    separateTrainAndValidLists = fmap (\(t,v)->(t [], v)) . separate' ([]++)
+
+    separate' :: ([a]->[a]) -> [[a]] -> [([a]->[a], [a])]
+    separate' acc [x]    = [(acc, x)]
+    separate' acc (x:xs) = (acc . (concat xs++), x) : separate' (acc . (x++)) xs
+    separate' _   []     = error "this should never happen, the size of the partition is too big to even hold an element"
 
 saveScores :: FilePath -> [NetScore] -> IO ()
 saveScores logsPath scores = writeFile logsPath (headScores<>"\n"<>scoresStr) -- TODO: catch IO Errors!
@@ -132,14 +153,15 @@ data ModelsParameters =
     (Maybe FilePath) -- Load path
     (Maybe FilePath) -- Save path
     (Maybe FilePath) -- Logs path
+    (Maybe Integer)  -- Number of hidden neurons
 
 modelsParameters :: Parser ModelsParameters
 modelsParameters =
   ModelsParameters <$> option auto (long "test-set"   <> short 't' <> value 0.15)
                    <*> ( StoppingCondition
                          <$> option auto (long "epochs" <> short 'e' <> value 300)
-                         <*> option auto (long "gradient-smaller" <> short 'g' <> value (0.09, 2))
-                         <*> option auto (long "max-error-change" <> value (0.004, 10))
+                         <*> option auto (long "gradient-smaller" <> short 'g' <> value (0.085, 3))
+                         <*> option auto (long "max-error-change" <> value (0.004, 15))
                        )
                    <*> option auto (long "batch-size" <> short 'b' <> value 40)
                    <*> option auto (long "normalize"  <> value True)
@@ -151,6 +173,7 @@ modelsParameters =
                    <*> optional (strOption (long "load"))
                    <*> optional (strOption (long "save"))
                    <*> optional (strOption (long "logs"))
+                   <*> optional (option auto (long "hidden-neurons" <> short 'h'))
 
 addLog :: KnownNat n => R n -> R n
 addLog a = signum a * log (abs a+1)
@@ -204,79 +227,83 @@ takeWhileCondFunc (StoppingCondition epochs (grad, giters) (stuck, siters)) =
 
 main :: IO ()
 main = do
-  ModelsParameters testPerc stopCond batchSize norm rate load save logs <- execParser (info (modelsParameters <**> helper) idm)
+  ModelsParameters testPerc stopCond batchSize norm rate load save logs hidden <- execParser (info (modelsParameters <**> helper) idm)
 
   let (seedNet, (seedShuffle, seedTraining)) = SR.split <$> SR.split (mkStdGen 487239842)
 
-  (net0 :: FFNet 2) <- case load of
-     Just loadFile -> netLoad loadFile
-     Nothing       -> return $ evalRand randomNetwork seedNet
+  let (sizeHidden :: SomeSing Nat) = toSing $ fromMaybe 20 hidden
 
-  let normFun :: KnownNat n => [R n] -> [R n]
-      normFun = if norm then normalize else id
+  case sizeHidden of
+    SomeSing (SNat :: Sing n) -> do
+      net0 <- case load of
+                Just loadFile -> netLoad loadFile :: IO (OneHiddenLayer n)
+                Nothing       -> return $ evalRand randomNetwork seedNet
 
-  -- Loading songs
-  songsRaw <- fmap (song2TupleRn labelSong) <$> getSongs filenameDataset
-  let songsDiscrete :: [R 3]
-      songsDiscrete = fmap (fst . fst) songsRaw
-      songsDisOneHotVector :: [R 21]
-      songsDisOneHotVector = fmap discreteToOneHotVector songsDiscrete
-      --songsFloat    :: [R 27]
-      songsFloat    = fmap (snd . fst) songsRaw
-      --songsLog      :: [R 27]
-      songsLog      = fmap addLog songsFloat
-      --songsLabel    :: [R 1]
-      songsLabel    = fmap snd songsRaw
-      --songs :: [(S ('D1 57), S ('D1 1))]
-      songs = (\(l1,l2,l3,o)->(S1D (l1#l2#l3), S1D o)) <$> zip4 songsDisOneHotVector (normFun songsFloat) (normFun songsLog) songsLabel
+      let normFun :: KnownNat m => [R m] -> [R m]
+          normFun = if norm then normalize else id
 
-  --print . toList . unwrap $ foldl1' (zipWithVector max) songsDiscrete
-  --print . toList . unwrap $ foldl1' (zipWithVector min) songsDiscrete
+      -- Loading songs
+      songsRaw <- fmap (song2TupleRn labelSong) <$> getSongs filenameDataset
+      let songsDiscrete :: [R 3]
+          songsDiscrete = fmap (fst . fst) songsRaw
+          songsDisOneHotVector :: [R 21]
+          songsDisOneHotVector = fmap discreteToOneHotVector songsDiscrete
+          --songsFloat    :: [R 27]
+          songsFloat    = fmap (snd . fst) songsRaw
+          --songsLog      :: [R 27]
+          songsLog      = fmap addLog songsFloat
+          --songsLabel    :: [R 1]
+          songsLabel    = fmap snd songsRaw
+          --songs :: [(S ('D1 57), S ('D1 1))]
+          songs = (\(l1,l2,l3,o)->(S1D (l1#l2#l3), S1D o)) <$> zip4 songsDisOneHotVector (normFun songsFloat) (normFun songsLog) songsLabel
 
-  let n = length songsRaw
-      -- Shuffling songs
-      shuffledSongs       = evalRand (shuffle songs) seedShuffle
-      (testSet, trainSet) = splitAt (round $ fromIntegral n * testPerc) shuffledSongs
+      --print . toList . unwrap $ foldl1' (zipWithVector max) songsDiscrete
+      --print . toList . unwrap $ foldl1' (zipWithVector min) songsDiscrete
 
-  {-
-   -case net0 of
-   -  x@(FullyConnected (FullyConnected' i o) _) :~> _ -> do
-   -    let subnet = x :~> NNil :: Network '[FullyConnected 75 1] '[ 'D1 75, 'D1 1 ]
-   -    --print $ runNet subnet (S1D 0) -- with this we get the biases
-   -    --print . sqrt . normSquared $ net0
-   -    print i -- biases for each output neuron
-   -    print o -- weights between neurons
-   -}
+      let n = length songsRaw
+          -- Shuffling songs
+          shuffledSongs       = evalRand (shuffle songs) seedShuffle
+          (testSet, trainSet) = splitAt (round $ fromIntegral n * testPerc) shuffledSongs
 
-  -- Pretraining scores
-  --print $ head shuffledSongs
-  putStrLn $ "Test Size: " <> show (length testSet)
-  putStrLn $ "Batch Size: " <> show batchSize
+      {-
+       -case net0 of
+       -  x@(FullyConnected (FullyConnected' i o) _) :~> _ -> do
+       -    let subnet = x :~> NNil :: Network '[FullyConnected 75 1] '[ 'D1 75, 'D1 1 ]
+       -    --print $ runNet subnet (S1D 0) -- with this we get the biases
+       -    --print . sqrt . normSquared $ net0
+       -    print i -- biases for each output neuron
+       -    print o -- weights between neurons
+       -}
 
-  -- Training Net
-  let netsInf = (read "Infinity", net0) : evalRand (trainOnBatchesEpochs net0 rate trainSet batchSize) seedTraining
-      netsScoresInf = fmap (netScore trainSet testSet) netsInf
+      -- Pretraining scores
+      --print $ head shuffledSongs
+      putStrLn $ "Test Size: " <> show (length testSet)
+      putStrLn $ "Batch Size: " <> show batchSize
 
-      (nets, netsScores) = unzip . takeWhileCondFunc stopCond $ zip (fmap snd netsInf) netsScoresInf
-      net = last nets
+      -- Training Net
+      let netsInf = (read "Infinity", net0) : evalRand (trainOnBatchesEpochs net0 rate trainSet batchSize) seedTraining
+          netsScoresInf = fmap (netScore trainSet testSet) netsInf
 
-  putStrLn $ "Epoch"
-           <> "\tTraining classification error"
-           <> "\tTraining error"
-           <> "\tGradNorm"
-           <> "\tTesting error"
-  -- Showing results of training net
-  forM_ (zip [(0::Integer)..] netsScores) $ \(epoch, NetScore trainCE trainE testE gradNorm) ->
-    putStrLn $ show epoch
-             <> "\t" <> show trainCE
-             <> "\t" <> show trainE
-             <> "\t" <> show gradNorm
-             <> "\t" <> show testE
+          (nets, netsScores) = unzip . takeWhileCondFunc stopCond $ zip (fmap snd netsInf) netsScoresInf
+          net = last nets
 
-  case logs of
-    Just logsPath -> saveScores logsPath netsScores
-    Nothing       -> return ()
+      putStrLn $ "Epoch"
+               <> "\tTraining classification error"
+               <> "\tTraining error"
+               <> "\tGradNorm"
+               <> "\tTesting error"
+      -- Showing results of training net
+      forM_ (zip [(0::Integer)..] netsScores) $ \(epoch, NetScore trainCE trainE testE gradNorm) ->
+        putStrLn $ show epoch
+                 <> "\t" <> show trainCE
+                 <> "\t" <> show trainE
+                 <> "\t" <> show gradNorm
+                 <> "\t" <> show testE
 
-  case save of
-    Just saveFile -> B.writeFile saveFile $ runPut (put net)
-    Nothing       -> return ()
+      case logs of
+        Just logsPath -> saveScores logsPath netsScores
+        Nothing       -> return ()
+
+      case save of
+        Just saveFile -> B.writeFile saveFile $ runPut (put net)
+        Nothing       -> return ()
