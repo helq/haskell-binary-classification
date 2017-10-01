@@ -52,6 +52,7 @@ executable homework1-exe
                      , cereal
                      , random
                      , singletons
+                     , directory
   default-language:    Haskell2010
 
 --test-suite homework1-test

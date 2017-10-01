@@ -6,7 +6,21 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
-{-# LANGUAGE TypeApplications  #-}
+{-# LANGUAGE FlexibleContexts  #-}
+
+{-
+-- Executing using:
+-- for i in {1..100}; do
+--   stack exec -- homework1-exe \
+--                    -b 100 \
+--                    --l2 0 \
+--                    -g '(0.085,3)' \
+--                    -e 300 \
+--                    --max-error-change '(0.004, 15)' \
+--                    -h $i \
+--                    --k-fold-val-size 0.14
+-- done
+-}
 
 module Main where
 
@@ -18,29 +32,34 @@ import           Data.List (zip4) --, foldl')
 
 import           Control.Monad (forM_)
 import           Control.Monad.Random (evalRand)
-import           System.Random (mkStdGen)
+import           System.Random (mkStdGen, RandomGen)
 import qualified System.Random as SR (split)
 
 import           Data.Semigroup ((<>))
 import           Options.Applicative (Parser, option, auto, optional, long, short, value
                                      , strOption, helper, idm, execParser, info, (<**>))
 import qualified Data.ByteString as B
-import           Data.Serialize (Serialize(..), runPut, put, runGet, get) --, Get
+import           Data.Serialize (Serialize, runPut, put, runGet, get) --, Get
+import           System.Directory (createDirectoryIfMissing)
 
 import           Numeric.LinearAlgebra.Static ((#), (&), R, unwrap, konst) --, zipWithVector)
 import           Numeric.LinearAlgebra (toList)
 
 --import           GHC.TypeLits
-import           Data.Singletons -- (KnownNat, Nat, Sing)
-import           Data.Singletons.TypeLits -- (KnownNat, Nat, Sing)
+import           Data.Singletons (Sing, SomeSing(SomeSing), toSing)
+import           Data.Singletons.TypeLits (KnownNat, Nat, Sing(SNat))
+import           Data.Singletons.Prelude.List (Head, Last)
 
-import           Grenade (Network, FullyConnected, Tanh, Logit, Shape(D1), --Relu,
-                         LearningParameters(LearningParameters), randomNetwork, S(S1D))
+import           Grenade (Network,  FullyConnected, Tanh, Logit, Shape(D1), --Relu,
+                         LearningParameters(LearningParameters), randomNetwork, S(S1D),
+                         Gradients)
+--import           Grenade (Network((:~>), NNil),  FullyConnected(FullyConnected), FullyConnected'(FullyConnected'), Tanh, Logit, Shape(D1), runNet, Relu,
+--                         LearningParameters(LearningParameters), randomNetwork, S(S1D))
 
 import           GrenadeExtras (binaryNetError, trainOnBatchesEpochs, normalize, hotvector)
 --import           GrenadeExtras.Zip (Zip)
 --import           GrenadeExtras.Orphan()
---import           GrenadeExtras.GradNorm
+import           GrenadeExtras.GradNorm (GradNorm)
 
 import           Song (Song, line2song, genre)
 import           Song.Grenade (song2TupleRn) --, SongSD)
@@ -107,19 +126,20 @@ saveScores :: FilePath -> [NetScore] -> IO ()
 saveScores logsPath scores = writeFile logsPath (headScores<>"\n"<>scoresStr) -- TODO: catch IO Errors!
   where
     scoresStr :: String
-    scoresStr = mconcat $ fmap netScore2String scores
+    scoresStr = mconcat . fmap netScore2String $ zip [(0::Int)..] scores
 
-    netScore2String NetScore{..} = show trainClassError <> "\t"
-                                <> show trainingError   <> "\t"
-                                <> show testClassError  <> "\t"
-                                <> show gradientNorm    <> "\n"
+    netScore2String (i, NetScore{..}) = show i <> "\t"
+                                     <> show trainClassError <> "\t"
+                                     <> show trainingError   <> "\t"
+                                     <> show testClassError  <> "\t"
+                                     <> show gradientNorm    <> "\n"
 
-    headScores = "train_classification_error\ttrain_error\ttest_classification_error\tgradient_norm"
+    headScores = "epoch\ttrain_classification_error\ttrain_error\ttest_classification_error\tgradient_norm"
 
 -- Reading data and running code
 
 filenameDataset :: String
-filenameDataset = "/home/helq/Experimenting/haskell/IHaskell/my_notebooks/ML_class/msd_genre_dataset.txt"
+filenameDataset = "./msd_genre_dataset.txt"
 
 getSongs :: String -> IO [Song]
 getSongs filename = do
@@ -154,6 +174,7 @@ data ModelsParameters =
     (Maybe FilePath) -- Save path
     (Maybe FilePath) -- Logs path
     (Maybe Integer)  -- Number of hidden neurons
+    (Maybe Double)   -- K-fold size of validation set
 
 modelsParameters :: Parser ModelsParameters
 modelsParameters =
@@ -174,6 +195,7 @@ modelsParameters =
                    <*> optional (strOption (long "save"))
                    <*> optional (strOption (long "logs"))
                    <*> optional (option auto (long "hidden-neurons" <> short 'h'))
+                   <*> optional (option auto (long "k-fold-val-size"))
 
 addLog :: KnownNat n => R n -> R n
 addLog a = signum a * log (abs a+1)
@@ -182,7 +204,11 @@ discreteToOneHotVector :: R 3 -> R 21
 discreteToOneHotVector featDiscre = (fromMaybe (konst 0) $ hotvector (round a)::R 8)
                                   # (fromMaybe (konst 0) $ hotvector (round b)::R 12)
                                   & c
-  where [a,b,c] = toList $ unwrap featDiscre
+  where (a,b,c) = case toList $ unwrap featDiscre of
+                    [a',b',c'] -> (a',b',c')
+                    _          -> error $  "This is weird, there should be only three discrete "
+                                        <> "features (R 3), aka. this never happens but the compiler "
+                                        <> "asks me to give an exahustive list for pattern matching, doh'"
 
 takeWhileCond :: ([a] -> [b]) -> (b -> Bool) -> [a] -> [a]
 takeWhileCond toCond stopCond xs = fmap snd . takeWhile (stopCond . fst) $ zip (toCond xs) xs
@@ -194,6 +220,11 @@ data NetScore = NetScore {
   gradientNorm    :: Double  -- accumulated norm of the gradients on an epoch
 } deriving (Show)
 
+netScore :: (Last shapes ~ 'D1 1, Foldable t)
+         => t (S (Head shapes), S ('D1 1))
+         -> t (S (Head shapes), S ('D1 1))
+         -> (Double, Network layers shapes)
+         -> NetScore
 netScore trainSet testSet (gradNorm, nn) =
   let (trainCE, trainE) = binaryNetError nn trainSet
       (testCE, _)       = binaryNetError nn testSet
@@ -227,17 +258,18 @@ takeWhileCondFunc (StoppingCondition epochs (grad, giters) (stuck, siters)) =
 
 main :: IO ()
 main = do
-  ModelsParameters testPerc stopCond batchSize norm rate load save logs hidden <- execParser (info (modelsParameters <**> helper) idm)
+  ModelsParameters testPerc stopCond batchSize norm rate load save logs hidden kfoldValPer <- execParser (info (modelsParameters <**> helper) idm)
 
   let (seedNet, (seedShuffle, seedTraining)) = SR.split <$> SR.split (mkStdGen 487239842)
 
-  let (sizeHidden :: SomeSing Nat) = toSing $ fromMaybe 20 hidden
+  let sizeHidden = fromMaybe 20 hidden
+      (singSizeHidden :: SomeSing Nat) = toSing sizeHidden
 
-  case sizeHidden of
+  case singSizeHidden of
     SomeSing (SNat :: Sing n) -> do
-      net0 <- case load of
-                Just loadFile -> netLoad loadFile :: IO (OneHiddenLayer n)
-                Nothing       -> return $ evalRand randomNetwork seedNet
+      (net0 :: OneHiddenLayer n) <- case load of
+                                      Just loadFile -> netLoad loadFile
+                                      Nothing       -> return $ evalRand randomNetwork seedNet
 
       let normFun :: KnownNat m => [R m] -> [R m]
           normFun = if norm then normalize else id
@@ -260,16 +292,16 @@ main = do
       --print . toList . unwrap $ foldl1' (zipWithVector max) songsDiscrete
       --print . toList . unwrap $ foldl1' (zipWithVector min) songsDiscrete
 
-      let n = length songsRaw
+      let sizeSongs = length songsRaw
           -- Shuffling songs
           shuffledSongs       = evalRand (shuffle songs) seedShuffle
-          (testSet, trainSet) = splitAt (round $ fromIntegral n * testPerc) shuffledSongs
+          (testSet, trainSet) = splitAt (round $ fromIntegral sizeSongs * testPerc) shuffledSongs
 
       {-
        -case net0 of
        -  x@(FullyConnected (FullyConnected' i o) _) :~> _ -> do
-       -    let subnet = x :~> NNil :: Network '[FullyConnected 75 1] '[ 'D1 75, 'D1 1 ]
-       -    --print $ runNet subnet (S1D 0) -- with this we get the biases
+       -    let subnet = x :~> NNil :: Network '[FullyConnected 75 n] '[ 'D1 75, 'D1 n ]
+       -    print $ runNet subnet (S1D 0) -- with this we get the biases
        -    --print . sqrt . normSquared $ net0
        -    print i -- biases for each output neuron
        -    print o -- weights between neurons
@@ -277,33 +309,79 @@ main = do
 
       -- Pretraining scores
       --print $ head shuffledSongs
-      putStrLn $ "Test Size: " <> show (length testSet)
+      putStrLn $ "Total Size: " <> show sizeSongs
+      putStrLn $ "Test Size:  " <> show (length testSet)
       putStrLn $ "Batch Size: " <> show batchSize
 
-      -- Training Net
-      let netsInf = (read "Infinity", net0) : evalRand (trainOnBatchesEpochs net0 rate trainSet batchSize) seedTraining
-          netsScoresInf = fmap (netScore trainSet testSet) netsInf
+      case kfoldValPer of
+        Nothing -> trainNet net0 trainSet testSet rate batchSize seedTraining stopCond logs save
+        Just valPer -> do
+          let valSize             = floor $ fromIntegral sizeSongs * valPer
+              (parts, kfoldSets)  = createKFoldPartitions valSize trainSet
+          putStrLn $ "Validation Size: " <> show valSize
+          putStrLn $ "Total parts for kfold: " <> show parts
 
-          (nets, netsScores) = unzip . takeWhileCondFunc stopCond $ zip (fmap snd netsInf) netsScoresInf
-          net = last nets
+          forM_ (zip [(1::Int)..] kfoldSets) $ \(kfoldNum, (trainSet', valSet)) -> do
+            let dirSaveNet = "kfold-val" <> show valPer <> "/" <> fromMaybe "hidden" logs <> "-" <> show sizeHidden <> "/" <> "kfoldnet" <> "-" <> show kfoldNum
+                logsKfoldN = dirSaveNet <> ".txt"
+                saveKfoldN = dirSaveNet <> "/" <> fromMaybe "nnet-hidden" save
+            putStrLn ""
+            createDirectoryIfMissing True dirSaveNet -- TODO: catch exceptions
+            putStrLn $ "Results to be saved in " <> logsKfoldN
+            putStrLn $ "Nets to be saved in " <> saveKfoldN
+            trainNet net0 trainSet' valSet rate batchSize seedTraining stopCond (Just logsKfoldN) (Just saveKfoldN)
 
-      putStrLn $ "Epoch"
-               <> "\tTraining classification error"
-               <> "\tTraining error"
-               <> "\tGradNorm"
-               <> "\tTesting error"
-      -- Showing results of training net
-      forM_ (zip [(0::Integer)..] netsScores) $ \(epoch, NetScore trainCE trainE testE gradNorm) ->
-        putStrLn $ show epoch
-                 <> "\t" <> show trainCE
-                 <> "\t" <> show trainE
-                 <> "\t" <> show gradNorm
-                 <> "\t" <> show testE
 
-      case logs of
-        Just logsPath -> saveScores logsPath netsScores
-        Nothing       -> return ()
+trainNet :: (Last shapes ~ 'D1 1,
+             RandomGen g,
+             Num (Gradients layers),
+             GradNorm (Gradients layers),
+             Show (Network layers shapes),
+             Serialize (Network layers shapes))
+         => Network layers shapes
+         -> [(S (Head shapes), S (Last shapes))]
+         -> [(S (Head shapes), S ('D1 1))]
+         -> LearningParameters
+         -> Int
+         -> g
+         -> StoppingCondition
+         -> Maybe FilePath
+         -> Maybe FilePath
+         -> IO ()
+trainNet net0 trainSet testSet rate batchSize seedTraining stopCond logs save = do
+  -- Training Net
+  let netsInf = (read "Infinity", net0) : evalRand (trainOnBatchesEpochs net0 rate trainSet batchSize) seedTraining
+      netsScoresInf = fmap (netScore trainSet testSet) netsInf
 
-      case save of
-        Just saveFile -> B.writeFile saveFile $ runPut (put net)
-        Nothing       -> return ()
+      (nets, netsScores) = unzip . takeWhileCondFunc stopCond $ zip (fmap snd netsInf) netsScoresInf
+      --net = last nets
+
+  putStrLn $ "Epoch"
+           <> "\tTraining classification error"
+           <> "\tTraining error"
+           <> "\tGradNorm"
+           <> "\tTesting error"
+
+  -- Showing results of training net
+  forM_ (zip3 [(0::Integer)..] netsScores nets) $ \(epoch, NetScore trainCE trainE testE gradNorm, currentNet) -> do
+    putStrLn $ show epoch
+             <> "\t" <> show trainCE
+             <> "\t" <> show trainE
+             <> "\t" <> show gradNorm
+             <> "\t" <> show testE
+    -- saving current trained net
+    case save of
+      Just saveFile -> let saveFileBin = saveFile <> "-e_" <> show epoch
+                                                  <> "-trainCE_" <> show trainCE
+                                                  <> "-testE_"   <> show testE
+                                                  <> ".bin"
+                        in B.writeFile saveFileBin $ runPut (put currentNet)
+      Nothing -> return ()
+
+  case logs of
+    Just logsPath -> saveScores logsPath netsScores
+    Nothing       -> return ()
+
+  --case save of
+  --  Just saveFile -> B.writeFile saveFile $ runPut (put net)
+  --  Nothing       -> return ()
