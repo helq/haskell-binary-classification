@@ -22,10 +22,13 @@ instance (KnownNat i, KnownNat o) => GradNorm (FullyConnected' i o) where
   normSquared (FullyConnected' r l) = r <.> r + (sum . fmap (\c->c<.>c) . toColumns $ l)
 
 instance (KnownNat i, KnownNat o) => GradNorm (FullyConnected i o) where
-  normSquared (FullyConnected w m) = normSquared w + normSquared m
+  normSquared (FullyConnected w _) = normSquared w
 
 instance GradNorm () where
   normSquared _ = 0
+
+instance (GradNorm a, GradNorm b) => GradNorm (a, b) where
+  normSquared (a, b) = normSquared a + normSquared b
 
 instance GradNorm Logit where
   normSquared _ = 0
@@ -41,6 +44,3 @@ instance GradNorm (Gradients '[]) where
 
 instance (GradNorm l, GradNorm (Gradient l), GradNorm (Gradients ls)) => GradNorm (Gradients (l ': ls)) where
   normSquared (grad :/> grest) = normSquared grad + normSquared grest
-
-instance (GradNorm a, GradNorm b) => GradNorm (a, b) where
-  normSquared (a, b) = normSquared a + normSquared b
