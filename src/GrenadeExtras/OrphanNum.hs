@@ -38,6 +38,15 @@ instance Num () where
   negate () = ()
   fromInteger _ = ()
 
+instance (Num a, Num b) => Num (a, b) where
+  (w1, m1) + (w2, m2) = (w1+w2, m1+m2)
+  (w1, m1) - (w2, m2) = (w1-w2, m1-m2)
+  (w1, m1) * (w2, m2) = (w1*w2, m1*m2)
+  abs    (w, m) = (abs w,         abs m)
+  signum (w, m) = (signum w,      signum m)
+  negate (w, m) = (negate w,      negate m)
+  fromInteger i = (fromInteger i, fromInteger i)
+
 instance Num Logit where
   Logit + Logit = Logit
   Logit - Logit = Logit

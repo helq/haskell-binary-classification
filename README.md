@@ -11,7 +11,7 @@ To reproduce the results given in the homework please follow the instructions be
 ## Prerequisites ##
 
 <!--TODO: talk about how to install stack-->
-Install Stack (haskell).
+Install Stack (haskell) and exec `stack build`.
 
 ## Reproducing results ##
 
@@ -40,7 +40,7 @@ stack exec -- homework1-exe \
 ### Logistic Regression ##
 
 ```bash
-mkdir -p training/logistic
+mkdir -p training/logistic{,2}
 stack exec -- homework1-exe --logit-reg -b 1000 -e 1000 --max-error-change '(0.004, 30)' --save training/logistic/logistic --logs training/logistic.txt
                                         #^ batch size   #^ stop if the change in the classification error in the last 100 epochs was smaller than 0.4%
                                                 #^ 1000 epochs tops
@@ -72,7 +72,9 @@ done
 for i in {1..100}; do
   f="kfold-val0.14/hidden-$i/kfoldnet-";
   for file in "$f"*.txt; do echo -n "$file "; tail -n 1 "$file"; done;
-done > kfold-val0.14/results.txt
+done > kfold-val0.14/final-results.txt
+
+stack exec -- postprocessing > kfold-val0.14/results-to-plot.txt
 ```
 
 ## Arbitrary Neural Networks ##

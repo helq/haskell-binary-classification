@@ -44,7 +44,7 @@ import           Grenade (Network,  FullyConnected, Tanh, Logit, Shape(D1), --Re
 --                         LearningParameters(LearningParameters), randomNetwork, S(S1D))
 
 import           GrenadeExtras (binaryNetError, trainOnBatchesEpochs, normalize, hotvector)
---import           GrenadeExtras.Zip (Zip)
+import           GrenadeExtras.Zip (Zip)
 --import           GrenadeExtras.Orphan()
 import           GrenadeExtras.GradNorm (GradNorm)
 
@@ -60,25 +60,11 @@ type LogisticRegression = Network '[ FullyConnected 75 1, Logit ]
 type OneHiddenLayer n = Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
                                 '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
 
---extractNetFromOneHidden :: forall n . OneHiddenLayer n -> Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
---                                                                     '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
---extractNetFromOneHidden (OneHiddenLayer net) = net
+type DiscreteSepContinuousNet = Network '[ Zip ('D1 21) ('D1 1) (FullyConnected 21 1) ('D1 54) ('D1 2) (FullyConnected 54 2),
+                                           Tanh, FullyConnected 3 1,
+                                           Logit ]
+                                        '[ 'D1 75, 'D1 3, 'D1 3, 'D1 1, 'D1 1 ]
 
---data OneHiddenLayer :: Nat -> * where
---  OHLayer :: Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ] '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ] -> OneHiddenLayer n
---type FFNet n = Network '[ FullyConnected 30 n, Tanh, FullyConnected n 1, Logit ]
---                     '[ 'D1 30, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
-
---instance KnownNat n => Serialize (FFNet n)
-
---type FFNetForDiscrete = Network '[FullyConnected 21 10] '[ 'D1 21, 'D1 10 ]
-----type FFNetForDiscrete = Network '[FullyConnected 21 14, FullyConnected 14 10] '[ 'D1 21, 'D1 14, 'D1 10 ]
---type FFNet = Network '[ Zip ('D1 21) ('D1 10) FFNetForDiscrete ('D1 54) ('D1 90) (FullyConnected 54 90),
---                        Tanh, FullyConnected 100 35,
---                        Tanh, FullyConnected 35 1,
---                        Logit ]
-
---                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 35, 'D1 35, 'D1 1, 'D1 1 ]
 --type FFNet = Network '[ FullyConnected 75 300, Tanh, FullyConnected 300 140, Tanh, FullyConnected 140 1, Logit ]
 --                     '[ 'D1 75, 'D1 300, 'D1 300, 'D1 140, 'D1 140, 'D1 1, 'D1 1 ]
 --type FFNet = Network '[ FullyConnected 75 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
@@ -151,7 +137,7 @@ data StoppingCondition = StoppingCondition { -- stop training if either:
   stuckInARange       :: (Double, Int)  -- or, the error hasn't changed more than `d` in the last `i` consecutive epochs
   }
 
-data TypeOfModelToTrain = LogitRegModel | OneHiddenLayerModel Integer
+data TypeOfModelToTrain = LogitRegModel | OneHiddenLayerModel Integer | ArbitraryNNModel Int
 
 data ModelsParameters =
   ModelsParameters
@@ -187,6 +173,7 @@ modelsParameters =
                    <*> optional (option auto (long "k-fold-val-size"))
                    <*> (   flag' LogitRegModel (long "logit-reg")
                        <|> (OneHiddenLayerModel <$> option auto (long "one-hidden-layer" <> short 'h'))
+                       <|> (ArbitraryNNModel    <$> option auto (long "arbitrary-nn"))
                        )
 
 addLog :: KnownNat n => R n -> R n
@@ -258,12 +245,20 @@ main = do
   let (seedNet, randSeed) = SR.split (mkStdGen 487239842)
 
   case modelType of
-    LogitRegModel -> (loadModel load seedNet :: IO LogisticRegression) >>= mainWithRandmNet mparams randSeed
-    OneHiddenLayerModel sizeHidden -> let (singSizeHidden :: SomeSing Nat) = toSing sizeHidden
-                                      in case singSizeHidden of
-                                           SomeSing (SNat :: Sing n) ->
-                                             (loadModel load seedNet :: IO (OneHiddenLayer n)) >>=
-                                             mainWithRandmNet mparams randSeed
+    LogitRegModel ->
+      (loadModel load seedNet :: IO LogisticRegression) >>= mainWithRandmNet mparams randSeed
+
+    OneHiddenLayerModel sizeHidden ->
+      let (singSizeHidden :: SomeSing Nat) = toSing sizeHidden
+      in case singSizeHidden of
+           SomeSing (SNat :: Sing n) ->
+             (loadModel load seedNet :: IO (OneHiddenLayer n)) >>=
+             mainWithRandmNet mparams randSeed
+
+    ArbitraryNNModel arbModelNum ->
+      case arbModelNum of
+        1 -> (loadModel load seedNet :: IO DiscreteSepContinuousNet) >>= mainWithRandmNet mparams randSeed
+        _ -> putStrLn $ "Sorry but there is no arbitrary neural net number " <> show arbModelNum
 
 
 mainWithRandmNet :: (Head shapes ~ 'D1 75,
@@ -278,8 +273,12 @@ mainWithRandmNet mparams randSeed net0 = do
   let (seedShuffle, seedTraining) = SR.split randSeed
       ModelsParameters testPerc batchSize norm stopCond rate _ save logs kfoldValPer modelType = mparams
       modelName = case modelType of
-                    LogitRegModel                  -> fromMaybe "logitReg" logs
-                    OneHiddenLayerModel sizeHidden -> fromMaybe "hidden" logs <> "-" <> show sizeHidden
+                    LogitRegModel                  -> fromMaybe "logitReg"  logs
+                    OneHiddenLayerModel sizeHidden -> fromMaybe "hidden"    logs <> "-" <> show sizeHidden
+                    ArbitraryNNModel arbModelNum   ->
+                      fromMaybe "arbitrary" logs <> "-" <> case arbModelNum of
+                                                             1 -> "separated_discrete_continuous"
+                                                             _ -> error $ "There is no arbitrary Neural Net model #" <> show arbModelNum
 
   putStrLn $ "Model name: " <> modelName
 

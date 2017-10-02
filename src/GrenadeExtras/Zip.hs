@@ -19,6 +19,7 @@ import           GHC.TypeLits
 
 import           Grenade.Core (UpdateLayer, Layer, Shape(D1), S(S1D), Gradient,
                                runForwards, runBackwards, runUpdate, createRandom, Tape)
+import           GrenadeExtras.GradNorm (GradNorm, normSquared)
 
 import           Numeric.LinearAlgebra.Static ((#), split, R) -- row, (===), splitRows, unrow
 
@@ -69,3 +70,15 @@ instance ( Layer x ('D1 p) ('D1 m)
 instance (Serialize a, Serialize b) => Serialize (Zip sia sa a sib sb b) where
   put (Zip a b) = put a *> put b
   get = Zip <$> get <*> get
+
+instance (GradNorm a, GradNorm b) => GradNorm (Zip sia sa a sib sb b) where
+  normSquared (Zip a b) = normSquared a + normSquared b
+
+instance (Num a, Num b) => Num (Zip sia sa a sib sb b) where
+  (Zip w1 m1) + (Zip w2 m2) = Zip (w1+w2) (m1+m2)
+  (Zip w1 m1) - (Zip w2 m2) = Zip (w1-w2) (m1-m2)
+  (Zip w1 m1) * (Zip w2 m2) = Zip (w1*w2) (m1*m2)
+  abs    (Zip w m) = Zip (abs w) (abs m)
+  signum (Zip w m) = Zip (signum w) (signum m)
+  negate (Zip w m) = Zip (negate w) (negate m)
+  fromInteger i = Zip (fromInteger i) (fromInteger i)

@@ -41,3 +41,6 @@ instance GradNorm (Gradients '[]) where
 
 instance (GradNorm l, GradNorm (Gradient l), GradNorm (Gradients ls)) => GradNorm (Gradients (l ': ls)) where
   normSquared (grad :/> grest) = normSquared grad + normSquared grest
+
+instance (GradNorm a, GradNorm b) => GradNorm (a, b) where
+  normSquared (a, b) = normSquared a + normSquared b
