@@ -8,20 +8,6 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE FlexibleContexts  #-}
 
-{-
--- Executing using:
--- for i in {1..100}; do
---   stack exec -- homework1-exe \
---                    -b 100 \
---                    --l2 0 \
---                    -g '(0.085,3)' \
---                    -e 300 \
---                    --max-error-change '(0.004, 15)' \
---                    -h $i \
---                    --k-fold-val-size 0.14
--- done
--}
-
 module Main where
 
 import           Lens.Micro.Extras (view)
@@ -36,8 +22,9 @@ import           System.Random (mkStdGen, RandomGen)
 import qualified System.Random as SR (split)
 
 import           Data.Semigroup ((<>))
-import           Options.Applicative (Parser, option, auto, optional, long, short, value
-                                     , strOption, helper, idm, execParser, info, (<**>))
+import           Options.Applicative (Parser, option, auto, optional, long, short, value,
+                                      strOption, helper, idm, execParser, info, (<**>), (<|>),
+                                      flag')
 import qualified Data.ByteString as B
 import           Data.Serialize (Serialize, runPut, put, runGet, get) --, Get
 import           System.Directory (createDirectoryIfMissing)
@@ -67,8 +54,9 @@ import           Shuffle (shuffle)
 
 --import           Debug.Trace (trace)
 
---type FFNet = Network '[ FullyConnected 75 1, Logit ]
---                     '[ 'D1 75, 'D1 1, 'D1 1 ]
+type LogisticRegression = Network '[ FullyConnected 75 1, Logit ]
+                                  '[ 'D1 75, 'D1 1, 'D1 1 ]
+
 type OneHiddenLayer n = Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
                                 '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
 
@@ -163,29 +151,31 @@ data StoppingCondition = StoppingCondition { -- stop training if either:
   stuckInARange       :: (Double, Int)  -- or, the error hasn't changed more than `d` in the last `i` consecutive epochs
   }
 
+data TypeOfModelToTrain = LogitRegModel | OneHiddenLayerModel Integer
+
 data ModelsParameters =
   ModelsParameters
     Float -- Size of test set
-    StoppingCondition
     Int   -- Size of batch
     Bool  -- Normalize data
+    StoppingCondition
     LearningParameters -- Parameters for Gradient Descent
     (Maybe FilePath) -- Load path
     (Maybe FilePath) -- Save path
     (Maybe FilePath) -- Logs path
-    (Maybe Integer)  -- Number of hidden neurons
     (Maybe Double)   -- K-fold size of validation set
+    TypeOfModelToTrain
 
 modelsParameters :: Parser ModelsParameters
 modelsParameters =
   ModelsParameters <$> option auto (long "test-set"   <> short 't' <> value 0.15)
+                   <*> option auto (long "batch-size" <> short 'b' <> value 40)
+                   <*> option auto (long "normalize"  <> value True)
                    <*> ( StoppingCondition
                          <$> option auto (long "epochs" <> short 'e' <> value 300)
                          <*> option auto (long "gradient-smaller" <> short 'g' <> value (0.085, 3))
                          <*> option auto (long "max-error-change" <> value (0.004, 15))
                        )
-                   <*> option auto (long "batch-size" <> short 'b' <> value 40)
-                   <*> option auto (long "normalize"  <> value True)
                    <*> (LearningParameters
                        <$> option auto (long "train_rate" <> short 'r' <> value 0.01)
                        <*> option auto (long "momentum" <> value 0.9)
@@ -194,8 +184,10 @@ modelsParameters =
                    <*> optional (strOption (long "load"))
                    <*> optional (strOption (long "save"))
                    <*> optional (strOption (long "logs"))
-                   <*> optional (option auto (long "hidden-neurons" <> short 'h'))
                    <*> optional (option auto (long "k-fold-val-size"))
+                   <*> (   flag' LogitRegModel (long "logit-reg")
+                       <|> (OneHiddenLayerModel <$> option auto (long "one-hidden-layer" <> short 'h'))
+                       )
 
 addLog :: KnownNat n => R n -> R n
 addLog a = signum a * log (abs a+1)
@@ -256,80 +248,100 @@ takeWhileCondFunc (StoppingCondition epochs (grad, giters) (stuck, siters)) =
             findMaxChange :: [Double] -> Double
             findMaxChange xs = maximum xs - minimum xs
 
+loadModel (Just loadFile) _       = netLoad loadFile
+loadModel Nothing         seedNet = return $ evalRand randomNetwork seedNet
+
 main :: IO ()
 main = do
-  ModelsParameters testPerc stopCond batchSize norm rate load save logs hidden kfoldValPer <- execParser (info (modelsParameters <**> helper) idm)
+  mparams@(ModelsParameters _ _ _ _ _ load _ _ _ modelType) <- execParser (info (modelsParameters <**> helper) idm)
 
-  let (seedNet, (seedShuffle, seedTraining)) = SR.split <$> SR.split (mkStdGen 487239842)
+  let (seedNet, randSeed) = SR.split (mkStdGen 487239842)
 
-  let sizeHidden = fromMaybe 20 hidden
-      (singSizeHidden :: SomeSing Nat) = toSing sizeHidden
+  case modelType of
+    LogitRegModel -> (loadModel load seedNet :: IO LogisticRegression) >>= mainWithRandmNet mparams randSeed
+    OneHiddenLayerModel sizeHidden -> let (singSizeHidden :: SomeSing Nat) = toSing sizeHidden
+                                      in case singSizeHidden of
+                                           SomeSing (SNat :: Sing n) ->
+                                             (loadModel load seedNet :: IO (OneHiddenLayer n)) >>=
+                                             mainWithRandmNet mparams randSeed
 
-  case singSizeHidden of
-    SomeSing (SNat :: Sing n) -> do
-      (net0 :: OneHiddenLayer n) <- case load of
-                                      Just loadFile -> netLoad loadFile
-                                      Nothing       -> return $ evalRand randomNetwork seedNet
 
-      let normFun :: KnownNat m => [R m] -> [R m]
-          normFun = if norm then normalize else id
+mainWithRandmNet :: (Head shapes ~ 'D1 75,
+                     Last shapes ~ 'D1 1,
+                     Show (Network layers shapes),
+                     Serialize (Network layers shapes),
+                     GradNorm (Gradients layers),
+                     Num (Gradients layers),
+                     RandomGen g)
+                  => ModelsParameters -> g -> Network layers shapes -> IO ()
+mainWithRandmNet mparams randSeed net0 = do
+  let (seedShuffle, seedTraining) = SR.split randSeed
+      ModelsParameters testPerc batchSize norm stopCond rate _ save logs kfoldValPer modelType = mparams
+      modelName = case modelType of
+                    LogitRegModel                  -> fromMaybe "logitReg" logs
+                    OneHiddenLayerModel sizeHidden -> fromMaybe "hidden" logs <> "-" <> show sizeHidden
 
-      -- Loading songs
-      songsRaw <- fmap (song2TupleRn labelSong) <$> getSongs filenameDataset
-      let songsDiscrete :: [R 3]
-          songsDiscrete = fmap (fst . fst) songsRaw
-          songsDisOneHotVector :: [R 21]
-          songsDisOneHotVector = fmap discreteToOneHotVector songsDiscrete
-          --songsFloat    :: [R 27]
-          songsFloat    = fmap (snd . fst) songsRaw
-          --songsLog      :: [R 27]
-          songsLog      = fmap addLog songsFloat
-          --songsLabel    :: [R 1]
-          songsLabel    = fmap snd songsRaw
-          --songs :: [(S ('D1 57), S ('D1 1))]
-          songs = (\(l1,l2,l3,o)->(S1D (l1#l2#l3), S1D o)) <$> zip4 songsDisOneHotVector (normFun songsFloat) (normFun songsLog) songsLabel
+  putStrLn $ "Model name: " <> modelName
 
-      --print . toList . unwrap $ foldl1' (zipWithVector max) songsDiscrete
-      --print . toList . unwrap $ foldl1' (zipWithVector min) songsDiscrete
+  let normFun :: KnownNat m => [R m] -> [R m]
+      normFun = if norm then normalize else id
 
-      let sizeSongs = length songsRaw
-          -- Shuffling songs
-          shuffledSongs       = evalRand (shuffle songs) seedShuffle
-          (testSet, trainSet) = splitAt (round $ fromIntegral sizeSongs * testPerc) shuffledSongs
+  -- Loading songs
+  songsRaw <- fmap (song2TupleRn labelSong) <$> getSongs filenameDataset
+  let songsDiscrete :: [R 3]
+      songsDiscrete = fmap (fst . fst) songsRaw
+      songsDisOneHotVector :: [R 21]
+      songsDisOneHotVector = fmap discreteToOneHotVector songsDiscrete
+      --songsFloat    :: [R 27]
+      songsFloat    = fmap (snd . fst) songsRaw
+      --songsLog      :: [R 27]
+      songsLog      = fmap addLog songsFloat
+      --songsLabel    :: [R 1]
+      songsLabel    = fmap snd songsRaw
+      --songs :: [(S ('D1 57), S ('D1 1))]
+      songs = (\(l1,l2,l3,o)->(S1D (l1#l2#l3), S1D o)) <$> zip4 songsDisOneHotVector (normFun songsFloat) (normFun songsLog) songsLabel
 
-      {-
-       -case net0 of
-       -  x@(FullyConnected (FullyConnected' i o) _) :~> _ -> do
-       -    let subnet = x :~> NNil :: Network '[FullyConnected 75 n] '[ 'D1 75, 'D1 n ]
-       -    print $ runNet subnet (S1D 0) -- with this we get the biases
-       -    --print . sqrt . normSquared $ net0
-       -    print i -- biases for each output neuron
-       -    print o -- weights between neurons
-       -}
+  --print . toList . unwrap $ foldl1' (zipWithVector max) songsDiscrete
+  --print . toList . unwrap $ foldl1' (zipWithVector min) songsDiscrete
 
-      -- Pretraining scores
-      --print $ head shuffledSongs
-      putStrLn $ "Total Size: " <> show sizeSongs
-      putStrLn $ "Test Size:  " <> show (length testSet)
-      putStrLn $ "Batch Size: " <> show batchSize
+  let sizeSongs = length songsRaw
+      -- Shuffling songs
+      shuffledSongs       = evalRand (shuffle songs) seedShuffle
+      (testSet, trainSet) = splitAt (round $ fromIntegral sizeSongs * testPerc) shuffledSongs
 
-      case kfoldValPer of
-        Nothing -> trainNet net0 trainSet testSet rate batchSize seedTraining stopCond logs save
-        Just valPer -> do
-          let valSize             = floor $ fromIntegral sizeSongs * valPer
-              (parts, kfoldSets)  = createKFoldPartitions valSize trainSet
-          putStrLn $ "Validation Size: " <> show valSize
-          putStrLn $ "Total parts for kfold: " <> show parts
+  {-
+   -case net0 of
+   -  x@(FullyConnected (FullyConnected' i o) _) :~> _ -> do
+   -    let subnet = x :~> NNil :: Network '[FullyConnected 75 n] '[ 'D1 75, 'D1 n ]
+   -    print $ runNet subnet (S1D 0) -- with this we get the biases
+   -    --print . sqrt . normSquared $ net0
+   -    print i -- biases for each output neuron
+   -    print o -- weights between neurons
+   -}
 
-          forM_ (zip [(1::Int)..] kfoldSets) $ \(kfoldNum, (trainSet', valSet)) -> do
-            let dirSaveNet = "kfold-val" <> show valPer <> "/" <> fromMaybe "hidden" logs <> "-" <> show sizeHidden <> "/" <> "kfoldnet" <> "-" <> show kfoldNum
-                logsKfoldN = dirSaveNet <> ".txt"
-                saveKfoldN = dirSaveNet <> "/" <> fromMaybe "nnet-hidden" save
-            putStrLn ""
-            createDirectoryIfMissing True dirSaveNet -- TODO: catch exceptions
-            putStrLn $ "Results to be saved in " <> logsKfoldN
-            putStrLn $ "Nets to be saved in " <> saveKfoldN
-            trainNet net0 trainSet' valSet rate batchSize seedTraining stopCond (Just logsKfoldN) (Just saveKfoldN)
+  -- Pretraining scores
+  --print $ head shuffledSongs
+  putStrLn $ "Total Size: " <> show sizeSongs
+  putStrLn $ "Test Size:  " <> show (length testSet)
+  putStrLn $ "Batch Size: " <> show batchSize
+
+  case kfoldValPer of
+    Nothing -> trainNet net0 trainSet testSet rate batchSize seedTraining stopCond logs save
+    Just valPer -> do
+      let valSize             = floor $ fromIntegral sizeSongs * valPer
+          (parts, kfoldSets)  = createKFoldPartitions valSize trainSet
+      putStrLn $ "Validation Size: " <> show valSize
+      putStrLn $ "Total parts for kfold: " <> show parts
+
+      forM_ (zip [(1::Int)..] kfoldSets) $ \(kfoldNum, (trainSet', valSet)) -> do
+        let dirSaveNet = "kfold-val" <> show valPer <> "/" <> modelName <> "/" <> "kfoldnet" <> "-" <> show kfoldNum
+            logsKfoldN = dirSaveNet <> ".txt"
+            saveKfoldN = dirSaveNet <> "/" <> fromMaybe "nnet-hidden" save
+        putStrLn ""
+        createDirectoryIfMissing True dirSaveNet -- TODO: catch exceptions
+        putStrLn $ "Results to be saved in " <> logsKfoldN
+        putStrLn $ "Nets to be saved in " <> saveKfoldN
+        trainNet net0 trainSet' valSet rate batchSize seedTraining stopCond (Just logsKfoldN) (Just saveKfoldN)
 
 
 trainNet :: (Last shapes ~ 'D1 1,
@@ -359,16 +371,16 @@ trainNet net0 trainSet testSet rate batchSize seedTraining stopCond logs save = 
   putStrLn $ "Epoch"
            <> "\tTraining classification error"
            <> "\tTraining error"
-           <> "\tGradNorm"
            <> "\tTesting error"
+           <> "\tGradNorm"
 
   -- Showing results of training net
   forM_ (zip3 [(0::Integer)..] netsScores nets) $ \(epoch, NetScore trainCE trainE testE gradNorm, currentNet) -> do
     putStrLn $ show epoch
              <> "\t" <> show trainCE
              <> "\t" <> show trainE
-             <> "\t" <> show gradNorm
              <> "\t" <> show testE
+             <> "\t" <> show gradNorm
     -- saving current trained net
     case save of
       Just saveFile -> let saveFileBin = saveFile <> "-e_" <> show epoch
