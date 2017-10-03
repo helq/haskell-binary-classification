@@ -1,0 +1,6 @@
+set terminal epscairo fontscale 0.6 size 12cm, 8cm linewidth 3
+set xlabel "epoch"
+set ylabel "Optimization error"
+set format y "%.6f"
+set output 'im03.eps'
+plot 'training/hidden-30-no-preprocessing.txt' using 'epoch':'train_error' every 120::2000 with points title "error"

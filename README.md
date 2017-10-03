@@ -1,21 +1,35 @@
 # Binary Classification Problem in Haskell (using Grenade) #
 
+This repo solves a machine learning learning homework problem proposed in the class
+IELE4014 (Uniandes).
 
-This repo solves a homework planned for my class on machine learning. The homework was
-about applying Logistic Regression and Neural Nets to solve a "simple" binary
-classification problem. For more info on what is really this code doing please refer to
-my [homework report](./ml_hw1.pdf)
+The task was about applying Logistic Regression and Neural Nets to solve a "simple" binary
+classification problem. For more info on what is really this code doing please refer to my
+[homework report](./ml_hw1.pdf) (The code to create the original report can be found
+[in this repo](https://github.com/helq/report-hw1-IELE4014))
 
-To reproduce the results given in the homework please follow the instructions below.
+To reproduce the results given in the report please follow the instructions below.
 
 ## Prerequisites ##
 
-<!--TODO: talk about how to install stack-->
-Install Stack (haskell) and exec `stack build`.
+Install [Stack](https://docs.haskellstack.org/) (Haskell package manager) and run in
+console:
+
+```
+stack setup # this may take quite a while depending on your system
+stack build
+```
+
+Download a curated version of Million Song Dataset from
+<https://labrosa.ee.columbia.edu/millionsong/blog/11-2-28-deriving-genre-dataset> and
+uncompress it in this folder.
 
 ## Reproducing results ##
 
-<!--TODO: add details on what are the lines of code below-->
+Running the lines below in bash should reproduce the results I got in the report (above).
+Some minors adjustments are necessary to make all lines executable (I thought that
+adding #'s at the end of lines finishing with \ would not be a problem, but apparently
+they need to be removed :S, I leave them as documentation but take care).
 
 ### Testing a Neural Net without normalizing data before feeding it to the NN ##
 
@@ -40,13 +54,17 @@ stack exec -- homework1-exe \
 ### Logistic Regression ##
 
 ```bash
-mkdir -p training/logistic{,2}
-stack exec -- homework1-exe --logit-reg -b 1000 -e 1000 --max-error-change '(0.004, 30)' --save training/logistic/logistic --logs training/logistic.txt
+mkdir -p training/logistic{-slow,1,2}
+stack exec -- homework1-exe --logit-reg -b 10000 -e 700 --max-error-change '(-0.1, 1)' --save training/logistic-slow/logistic --logs training/logistic-slow.txt
+                                        #^ batch size of 10k with train set of size 8k means that there is no batching, all data is used at once
+                                                         #^ disabling stoping condition on small improvements in training error
+
+stack exec -- homework1-exe --logit-reg -b 1000 -e 30 --max-error-change '(0.004, 30)' --save training/logistic1/logistic1 --logs training/logistic1.txt
                                         #^ batch size   #^ stop if the change in the classification error in the last 100 epochs was smaller than 0.4%
                                                 #^ 1000 epochs tops
 
-stack exec -- homework1-exe --logit-reg -b 10000 -e 1000 --max-error-change '(0.004, 30)' --load training/logistic/logistic-e_1000*.bin --save training/logistic2/logistic --logs training/logistic2.txt
-                                        #^ maximum batch size, aka. use all data to train
+stack exec -- homework1-exe --logit-reg -b 10000 -e 300 --max-error-change '(0.002, 30)' --load training/logistic1/logistic1-e_30*.bin --save training/logistic2/logistic2 --logs training/logistic2.txt
+                                        #^ maximum batch size (no batching), aka. use all data to train
 ```
 
 ### Neural Nets with a hidden layer of arbitrary size ##
@@ -56,13 +74,13 @@ Performing k-fold cross validation:
 ```bash
 for i in {1..100}; do
   stack exec -- homework1-exe \
-                   -b 100 \                           # batch size
-                   --l2 0 \                           # no regularization
-                   -g '(0.085,3)' \                   # look above (Testing a Neural Net ...)
-                   -e 300 \                           # force stop in epoch 300
-                   --max-error-change '(0.004, 15)' \ # stop if the maximum classification training error change in the last 15 epochs has been less than 0.4$
-                   -h $i \                            # using neural net with a hidden layer of size 30
-                   --k-fold-val-size 0.14             # size of the partition to perform k-fold cross validation
+                   -b 100 \
+                   --l2 0 \
+                   -g '(0.085,3)' \
+                   -e 300 \
+                   --max-error-change '(0.004, 15)' \
+                   -h $i \
+                   --k-fold-val-size 0.14
 done
 ```
 
@@ -77,7 +95,35 @@ done > kfold-val0.14/final-results.txt
 stack exec -- postprocessing > kfold-val0.14/results-to-plot.txt
 ```
 
+#### Training selected model (2 neurons in hidden layer) ####
+
+```bash
+mkdir -p training/hidden-2
+stack exec -- homework1-exe -b 100 --l2 0 -g '(0.085,3)' -e 300 --max-error-change '(0.004, 15)' -h 2 \
+                            --save training/hidden-2/hidden-2 --logs training/hidden-2.txt
+```
+
+
 ## Arbitrary Neural Networks ##
+
+```bash
+mkdir -p training/{huge,separated_discrete_continuous}
+stack exec -- homework1-exe -b 100 --l2 0 --arbitrary-nn 1 \
+                    --save training/separated_discrete_continuous/separated_discrete_continuous \
+                    --logs training/separated_discrete_continuous.txt
+stack exec -- homework1-exe -b 100 --l2 0 -g '(0.085,3)' --max-error-change '(0.004, 15)' --arbitrary-nn 2 --save training/huge/huge --logs training/huge.txt
+```
+
+## Plots ##
+
+To plot is necessary to have installed gnuplot. Once you have it installed run in
+terminal:
+
+```bash
+cp training/logistic{1,}.txt
+tail -n +3 training/logistic2.txt >> training/logistic.txt
+gnuplot gnuplotscripts/im0*.gn
+```
 
 ## PS ##
 

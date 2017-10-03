@@ -1,0 +1,6 @@
+set terminal epscairo fontscale 0.6 size 12cm, 8cm linewidth 3
+set xlabel "Number of neurons in hidden layer"
+set ylabel "Classification error in training set"
+set format y "%g %%"
+set output 'im05.eps'
+plot './kfold-val0.14/results-to-plot.txt' using 'hidden-layer-size':'training-classification-error' with line title ""

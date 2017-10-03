@@ -1,0 +1,7 @@
+set terminal epscairo fontscale 0.6 size 12cm, 8cm linewidth 3
+set xlabel "epoch"
+set ylabel "Classification Error"
+set format y "%g %%"
+set output 'im11.eps'
+plot 'training/huge.txt' using ($2 * 100) with line title "Training error", \
+     'training/huge.txt' using ($4 * 100) with line title "Test error"

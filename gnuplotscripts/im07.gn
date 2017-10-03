@@ -1,0 +1,7 @@
+set terminal epscairo fontscale 0.6 size 12cm, 8cm linewidth 3
+set xlabel "epoch"
+set ylabel "Classification Error"
+set format y "%g %%"
+set output 'im07.eps'
+plot 'training/logistic-slow.txt' using 'epoch':($2 * 100) with line title "Training error", \
+     'training/logistic-slow.txt' using 'epoch':($4 * 100) with line title "Test error"

@@ -1,0 +1,6 @@
+set terminal epscairo fontscale 0.6 size 12cm, 8cm linewidth 3
+set xlabel "Number of neurons in hidden layer"
+set ylabel "Mean number of epochs to train network"
+set format y "%g %%"
+set output 'im06.eps'
+plot './kfold-val0.14/results-to-plot.txt' using 'hidden-layer-size':'total_epochs' with line title ""

@@ -60,13 +60,14 @@ type LogisticRegression = Network '[ FullyConnected 75 1, Logit ]
 type OneHiddenLayer n = Network '[ FullyConnected 75 n, Tanh, FullyConnected n 1, Logit ]
                                 '[ 'D1 75, 'D1 n, 'D1 n, 'D1 1, 'D1 1 ]
 
-type DiscreteSepContinuousNet = Network '[ Zip ('D1 21) ('D1 1) (FullyConnected 21 1) ('D1 54) ('D1 2) (FullyConnected 54 2),
-                                           Tanh, FullyConnected 3 1,
+type DiscreteSepContinuousNet = Network '[ Zip ('D1 21) ('D1 2) (FullyConnected 21 2) ('D1 54) ('D1 2) (FullyConnected 54 2),
+                                           Tanh, FullyConnected 4 1,
                                            Logit ]
-                                        '[ 'D1 75, 'D1 3, 'D1 3, 'D1 1, 'D1 1 ]
+                                        '[ 'D1 75, 'D1 4, 'D1 4, 'D1 1, 'D1 1 ]
 
---type FFNet = Network '[ FullyConnected 75 300, Tanh, FullyConnected 300 140, Tanh, FullyConnected 140 1, Logit ]
---                     '[ 'D1 75, 'D1 300, 'D1 300, 'D1 140, 'D1 140, 'D1 1, 'D1 1 ]
+type HugeNetwork = Network '[ FullyConnected 75 40, Tanh, FullyConnected 40 10, Tanh, FullyConnected 10 3, Tanh, FullyConnected 3 1, Logit ]
+                           '[ 'D1 75, 'D1 40, 'D1 40, 'D1 10, 'D1 10, 'D1 3, 'D1 3, 'D1 1, 'D1 1 ]
+
 --type FFNet = Network '[ FullyConnected 75 100, Tanh, FullyConnected 100 40, Tanh, FullyConnected 40 20, Relu, FullyConnected 20 1, Logit ]
 --                     '[ 'D1 75, 'D1 100, 'D1 100, 'D1 40, 'D1 40, 'D1 20, 'D1 20, 'D1 1, 'D1 1 ]
 
@@ -258,6 +259,7 @@ main = do
     ArbitraryNNModel arbModelNum ->
       case arbModelNum of
         1 -> (loadModel load seedNet :: IO DiscreteSepContinuousNet) >>= mainWithRandmNet mparams randSeed
+        2 -> (loadModel load seedNet :: IO HugeNetwork) >>= mainWithRandmNet mparams randSeed
         _ -> putStrLn $ "Sorry but there is no arbitrary neural net number " <> show arbModelNum
 
 
@@ -278,6 +280,7 @@ mainWithRandmNet mparams randSeed net0 = do
                     ArbitraryNNModel arbModelNum   ->
                       fromMaybe "arbitrary" logs <> "-" <> case arbModelNum of
                                                              1 -> "separated_discrete_continuous"
+                                                             2 -> "huge_network"
                                                              _ -> error $ "There is no arbitrary Neural Net model #" <> show arbModelNum
 
   putStrLn $ "Model name: " <> modelName

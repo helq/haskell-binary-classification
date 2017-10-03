@@ -1,0 +1,7 @@
+set terminal epscairo fontscale 0.6 size 12cm, 8cm linewidth 3
+set xlabel "epoch"
+set ylabel "Classification Error"
+set format y "%g %%"
+set output 'im01.eps'
+plot 'training/hidden-30-no-preprocessing.txt' using 'epoch':($2 * 100) every 120::2000 with points title "Training error", \
+     'training/hidden-30-no-preprocessing.txt' using 'epoch':($4 * 100) every 120::2000 with points title "Test error"
