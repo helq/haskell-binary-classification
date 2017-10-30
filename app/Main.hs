@@ -50,7 +50,7 @@ import           GrenadeExtras.GradNorm (GradNorm)
 
 import           Song (Song, line2song, genre)
 import           Song.Grenade (song2TupleRn) --, SongSD)
-import           Shuffle (shuffle)
+import           Shuffle (shuffle) -- TODO: use the "standard" shuffleM http://hackage.haskell.org/package/random-shuffle
 
 --import           Debug.Trace (trace)
 

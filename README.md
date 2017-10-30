@@ -8,7 +8,10 @@ classification problem. For more info on what is really this code doing please r
 [homework report](./ml_hw1.pdf) (The code to create the original report can be found
 [in this repo](https://github.com/helq/report-hw1-IELE4014))
 
-To reproduce the results given in the report please follow the instructions below.
+To **replicate** the results given in the report please follow the instructions below.
+Thanks to [**@cesandovalp**](https://github.com/cesandovalp) for noticing the code below
+replicates the experiments, not simply reproduces them. What is replicability you think,
+well [Paper: Replicability is not Reproducibility (by Chris Drummond)](http://cogprints.org/7691/7/ICMLws09.pdf).
 
 ## Prerequisites ##
 
@@ -24,9 +27,9 @@ Download a curated version of Million Song Dataset from
 <https://labrosa.ee.columbia.edu/millionsong/blog/11-2-28-deriving-genre-dataset> and
 uncompress it in this folder.
 
-## Reproducing results ##
+## Replicating results ##
 
-Running the lines below in bash should reproduce the results I got in the report (above).
+Running the lines below in bash should **replicate** the results I got in the report (above).
 Some minors adjustments are necessary to make all lines executable (I thought that
 adding #'s at the end of lines finishing with \ would not be a problem, but apparently
 they need to be removed :S, I leave them as documentation but take care).
